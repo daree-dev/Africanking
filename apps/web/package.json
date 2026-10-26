@@ -6,8 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "test:api": "vitest run __tests__/api"
+    "lint": "next lint"
   },
   "dependencies": {
     "@be-energy/stellar": "workspace:*",

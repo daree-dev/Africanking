@@ -1,6 +1,6 @@
-# BeEnergy
+# Africanking
 
-> **Renewable energy cooperatives deserve proof. BeEnergy puts it on-chain.**
+> **Renewable energy cooperatives deserve proof. Africanking puts it on-chain.**
 
 [![Live Demo](https://img.shields.io/badge/🌐_Live_Demo-be--energy--six.vercel.app-00537A?style=for-the-badge)](https://be-energy-six.vercel.app)
 [![Network](https://img.shields.io/badge/Stellar-Testnet-FFD500?style=for-the-badge&logo=stellar)](https://stellar.org)
@@ -9,7 +9,7 @@
 ---
 
 > ### ⚠️ Estado actual (pivot en curso — leer antes de lo demás)
-> BeEnergy está pivoteando el modelo de producto. El flujo de "comprador externo / certificado vendido a ESG" y cualquier mercado secundario descritos más abajo **no son el rumbo actual** — se descartaron junto con el marketplace P2P. La nueva dirección: software de gestión de créditos de generación compartida para cooperativas eléctricas (foco Argentina, referencia: Exa Energia en Brasil). El resto de este README todavía no está actualizado al pivot — se está reescribiendo por partes. No asumir que lo de abajo describe el producto que se está construyendo hoy.
+> Africanking está pivoteando el modelo de producto. El flujo de "comprador externo / certificado vendido a ESG" y cualquier mercado secundario descritos más abajo **no son el rumbo actual** — se descartaron junto con el marketplace P2P. La nueva dirección: software de gestión de créditos de generación compartida para cooperativas eléctricas (foco Argentina, referencia: Exa Energia en Brasil). El resto de este README todavía no está actualizado al pivot — se está reescribiendo por partes. No asumir que lo de abajo describe el producto que se está construyendo hoy.
 
 ---
 
@@ -34,20 +34,20 @@ Renewable energy cooperatives generate clean energy every day — but **they can
 
 Meanwhile, companies and funds with ESG commitments are actively looking for verifiable renewable energy claims — and can't find them.
 
-**The gap between cooperatives and buyers is a trust gap. BeEnergy closes it.**
+**The gap between cooperatives and buyers is a trust gap. Africanking closes it.**
 
 ---
 
 ## The Solution
 
-BeEnergy is a cooperative management dashboard + on-chain certification infrastructure on **Stellar**.
+Africanking is a cooperative management dashboard + on-chain certification infrastructure on **Stellar**.
 
 Every kWh registered by a cooperative becomes a **proto-certificate**: a verifiable, on-chain claim tied to a real meter, a real cooperative, and a real time period.
 
 ```
 Smart meter sends reading → POST /api/meters/readings
          ↓
-BeEnergy validates & mints token on Stellar (1 token = 1 kWh)
+Africanking validates & mints token on Stellar (1 token = 1 kWh)
          ↓
 Certificate is assigned to cooperative members
          ↓
@@ -67,16 +67,16 @@ No intermediaries. No PDFs. No trust required — the chain is the proof.
 ### For Cooperatives
 
 ```
-1. Register cooperative on BeEnergy
+1. Register cooperative on Africanking
 2. Add smart meters (physical IoT devices)
 3. Meters send generation readings automatically via API
-4. BeEnergy mints proto-certificates on Stellar
+4. Africanking mints proto-certificates on Stellar
 5. Manage members, view generation stats, track certificates
 ```
 
 ### Authentication
 
-BeEnergy supports two access methods — no setup required to try:
+Africanking supports two access methods — no setup required to try:
 
 **Email + Password** (for admins, buyers, internal team)
 ```
@@ -127,7 +127,7 @@ We validated the problem directly with:
 - **ESG compliance teams** — confirmed demand for verifiable, auditable certificates
 - **Climate program coordinators** — confirmed interest in blockchain-based proof over PDFs
 
-Key insight: the bottleneck isn't production — cooperatives generate plenty. The bottleneck is **verifiable proof**. BeEnergy solves exactly that.
+Key insight: the bottleneck isn't production — cooperatives generate plenty. The bottleneck is **verifiable proof**. Africanking solves exactly that.
 
 ---
 
@@ -152,7 +152,7 @@ Key insight: the bottleneck isn't production — cooperatives generate plenty. T
 | Styling | Tailwind CSS v4 + shadcn/ui |
 | Auth | Supabase + JWT + Stellar wallet signature |
 | Wallet Support | Freighter, xBull, Lobstr (via Stellar Wallets Kit) |
-| Backend | Next.js API Routes + Supabase |
+| Backend | Standalone Next.js API service + Supabase |
 | Deployment | Vercel |
 | Monorepo | Turborepo + pnpm |
 
@@ -161,13 +161,14 @@ Key insight: the bottleneck isn't production — cooperatives generate plenty. T
 ## Monorepo Structure
 
 ```
-be-energy/
+Africanking/
 ├── apps/
 │   ├── contracts/           # Soroban smart contracts (Rust)
 │   │   ├── energy_token/         # SEP-41 certificate token
 │   │   ├── energy_distribution/  # Member allocation logic
 │   │   └── community_governance/ # DAO-style proposals
-│   └── web/                 # Next.js dashboard
+│   ├── api/                  # Standalone Next.js API service
+│   └── web/                  # Next.js dashboard
 │       ├── app/             # App Router pages
 │       ├── components/      # UI components
 │       └── lib/             # Auth, wallet, Stellar utils
@@ -182,13 +183,16 @@ be-energy/
 ## Quick Start
 
 ```bash
-git clone https://github.com/BuenDia-Builders/be-energy.git
-cd be-energy
+git clone https://github.com/BuenDia-Builders/Africanking.git
+cd Africanking
 pnpm install
+# Set required backend values in apps/api/.env.local using apps/api/.env.example
 pnpm dev
 ```
 
 Frontend: `http://localhost:3000`
+
+API: `http://localhost:3001` (the frontend proxies `/api/*` to the API service)
 
 **Build & test contracts:**
 ```bash
@@ -211,9 +215,9 @@ cargo test
 
 ## Planned Stellar Ecosystem Integrations
 
-BeEnergy is designed to plug into Stellar's growing DeFi and payments ecosystem. Planned integrations from the [SCF Integration Track](https://stellar.gitbook.io/scf-handbook/scf-awards/build-award/integration-track/integration-list):
+Africanking is designed to plug into Stellar's growing DeFi and payments ecosystem. Planned integrations from the [SCF Integration Track](https://stellar.gitbook.io/scf-handbook/scf-awards/build-award/integration-track/integration-list):
 
-| Integration | What it unlocks for BeEnergy |
+| Integration | What it unlocks for Africanking |
 |-------------|------------------------------|
 | **[DeFindex](https://defindex.io)** | Cooperatives earn yield on certificate proceeds held in vaults — idle capital works while certificates wait for buyers |
 | **[Blend Protocol](https://blend.capital)** | Use certificates as collateral for credit lines — cooperatives access working capital without selling |
