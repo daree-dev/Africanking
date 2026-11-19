@@ -1,0 +1,44 @@
+// Prisma schema for cooperative energy management.
+// NOTE: This file is provided as context; the repository may use a different
+// datasource/generator configuration. Keep existing blocks intact when editing.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Audit trail
+// ---------------------------------------------------------------------------
+
+/// Append-only audit event capturing a sensitive domain state transition.
+/// Rows are never updated or deleted by ordinary API roles; only inserts are
+/// permitted. See docs/data-retention.md for rollout/migration notes.
+model AuditEvent {
+  id            String   @id @default(cuid())
+  /// Domain area: MEMBERSHIP | METER | READING_REVIEW | ALLOCATION | SETTLEMENT
+  entityType    String
+  /// Identifier of the affected resource (membership id, meter id, etc.).
+  entityId      String
+  /// Transition verb, e.g. CREATED | UPDATED | APPROVED | REJECTED | SETTLED.
+  action        String
+  /// Actor identity (user id) that performed the transition.
+  actorId       String
+  /// Correlates all events emitted for a single request/operation.
+  operationId   String
+  /// Optional human-readable reason supplied by the actor.
+  reason        String?
+  /// Safe, redacted before/after summary (no secrets or PII beyond ids).
+  changeSummary Json
+  /// Server-side timestamp of the transition.
+  createdAt     DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([operationId])
+  @@index([createdAt])
+}
