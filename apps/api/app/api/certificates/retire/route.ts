@@ -1,3 +1,18 @@
+/**
+ * Issue #8 — This endpoint is DEPRECATED for new workflows.
+ *
+ * The external-buyer retirement flow (buyer_purpose, ESG semantics) has been
+ * replaced by the internal credit lifecycle at /api/credits.
+ *
+ * This route is preserved as-is to service existing "available" certificates
+ * and maintain historical audit records in the retirements table.
+ * The retirements table is NOT removed; it remains readable via the
+ * legacy_retirements view.
+ *
+ * New generation periods should use:
+ *   POST /api/credits         → create a measured credit
+ *   PATCH /api/credits/:id    → advance through validated → allocated → settled
+ */
 import { NextRequest, NextResponse } from "next/server"
 import * as StellarSdk from "@stellar/stellar-sdk"
 import { supabase } from "@/lib/supabase"
@@ -7,7 +22,7 @@ import { validateBody } from "@/lib/validation/validate"
 import { retireSchema } from "@/lib/validation/schemas"
 import { safeDbError, safeCatchError } from "@/lib/errors/safe-error"
 
-// POST: authenticated — buyer retires certificate
+// POST: authenticated — buyer retires certificate (DEPRECATED; use /api/credits for new workflows)
 export async function POST(req: NextRequest) {
   try {
     const session = await requireAuth()
@@ -119,11 +134,21 @@ export async function POST(req: NextRequest) {
       stellar_address: buyer_address,
     })
 
-    return NextResponse.json({
-      success: true,
-      retirement,
-      burn_tx_hash: burnTxHash,
-    })
+    return NextResponse.json(
+      {
+        success: true,
+        retirement,
+        burn_tx_hash: burnTxHash,
+        _deprecation: "This endpoint is deprecated. Use POST /api/credits for new generation periods.",
+      },
+      {
+        status: 200,
+        headers: {
+          Deprecation: "true",
+          Link: '</api/credits>; rel="successor-version"',
+        },
+      }
+    )
   } catch (err) {
     return safeCatchError(err)
   }

@@ -142,10 +142,10 @@ export const mintSchema = z.object({
   { message: "reading_id or certificate_id required" }
 )
 
-// Update reading
+// Update reading — now also supports provenance verification states
 export const updateReadingSchema = z.object({
   reading_id: uuid,
-  status: z.enum(["pending", "verified", "rejected"]),
+  status: z.enum(["pending", "verified", "rejected", "corrected"]),
 })
 
 // Retire

@@ -4,6 +4,10 @@ import { requireAuth, requireAdmin, isSession } from "@/lib/auth/middleware"
 import { validateBody } from "@/lib/validation/validate"
 import { createReadingSchema, updateReadingSchema } from "@/lib/validation/schemas"
 import { safeDbError, safeCatchError } from "@/lib/errors/safe-error"
+// Issue #6 — energy calculation domain
+import { computeEnergyQuantities, EnergyCalculationError } from "@/lib/domain/energy-calculations"
+// Issue #7 — provenance state transitions
+import { assertValidStateTransition, ProvenanceError } from "@/lib/domain/reading-provenance"
 
 function getNetInjectedKwh(kwhGenerated: number, kwhSelfConsumed: number) {
   return Math.max(0, kwhGenerated - kwhSelfConsumed)
@@ -75,7 +79,25 @@ export async function POST(req: NextRequest) {
 
     const kwhGen = kwh_generated ?? kwh_injected
     const kwhSelf = kwh_self_consumed ?? kwh_consumed
-    const kwhInjected = kwh_injected ?? getNetInjectedKwh(kwhGen!, kwhSelf ?? 0)
+
+    // Issue #6 — compute canonical energy quantities to validate the input
+    // and derive net surplus.  Throws EnergyCalculationError for impossible inputs.
+    let energyResult
+    try {
+      energyResult = computeEnergyQuantities({
+        kwh_generated: kwhGen!,
+        kwh_self_consumed: kwhSelf ?? null,
+        kwh_net_surplus_override: kwh_injected ?? null,
+        quality: "measured",
+      })
+    } catch (err) {
+      if (err instanceof EnergyCalculationError) {
+        return NextResponse.json({ error: err.message }, { status: 400 })
+      }
+      throw err
+    }
+
+    const kwhInjected = energyResult.kwh_net_surplus
 
     let prosumerId: string | null = null
     let coopId: string | null = cooperative_id ?? null
@@ -101,7 +123,7 @@ export async function POST(req: NextRequest) {
     if (meter_id) {
       const { data: meter } = await supabase
         .from("meters")
-        .select("cooperative_id, member_stellar_address")
+        .select("cooperative_id, member_stellar_address, device_type")
         .eq("id", meter_id)
         .single()
 
@@ -152,20 +174,46 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Issue #7 — determine source_type from meter device type for provenance.
+    // We fetch the meter once above; if meter_id was provided we already have device_type.
+    let sourceType = "manual"
+    if (meter_id) {
+      const { data: meterForSource } = await supabase
+        .from("meters")
+        .select("device_type")
+        .eq("id", meter_id)
+        .single()
+
+      if (meterForSource?.device_type === "bidirectional_meter") {
+        sourceType = "distributor_meter"
+      } else if (meterForSource?.device_type === "inverter") {
+        sourceType = "inverter"
+      } else if (meterForSource?.device_type === "smart_meter") {
+        sourceType = "scada"
+      }
+    }
+
     const { data: reading, error: insertError } = await supabase
       .from("readings")
       .insert({
         prosumer_id: prosumerId,
         meter_id: meter_id ?? null,
         cooperative_id: coopId,
-        kwh_generated: kwhGen,
+        kwh_generated: energyResult.kwh_generated,
         kwh_injected: kwhInjected,
-        kwh_self_consumed: kwhSelf ?? null,
+        kwh_self_consumed: energyResult.kwh_self_consumed ?? null,
+        kwh_net_surplus: kwhInjected,
         power_watts: power_watts ?? null,
         interval_minutes: interval_minutes ?? 15,
         reading_date: reading_date ?? null,
         reading_timestamp: reading_timestamp ?? null,
-        source: meter_id ? "meter" : "manual",
+        // Issue #7 — provenance fields
+        source: sourceType,
+        source_type: sourceType,
+        source_id: meter_id ?? (stellar_address ?? null),
+        ingestion_time: new Date().toISOString(),
+        measurement_time: reading_timestamp ?? reading_date ?? new Date().toISOString(),
+        verification_state: "pending",
         status: "pending",
       })
       .select()
@@ -186,10 +234,10 @@ export async function PATCH(req: NextRequest) {
     const v = validateBody(updateReadingSchema, body)
     if (!v.success) return v.response
 
-    // Get the reading to check cooperative_id
+    // Get the reading to check cooperative_id and current verification state
     const { data: reading } = await supabase
       .from("readings")
-      .select("cooperative_id")
+      .select("cooperative_id, verification_state, status")
       .eq("id", v.data.reading_id)
       .single()
 
@@ -201,10 +249,33 @@ export async function PATCH(req: NextRequest) {
     const session = await requireAdmin(reading.cooperative_id)
     if (!isSession(session)) return session
 
+    // Issue #7 — validate the verification state transition
+    const currentState = reading.verification_state ?? reading.status
+    try {
+      assertValidStateTransition(
+        currentState as "pending" | "verified" | "rejected" | "corrected",
+        v.data.status as "pending" | "verified" | "rejected" | "corrected"
+      )
+    } catch (err) {
+      if (err instanceof ProvenanceError) {
+        return NextResponse.json({ error: err.message }, { status: 400 })
+      }
+      throw err
+    }
+
+    const updatePayload: Record<string, unknown> = {
+      status: v.data.status,
+      verification_state: v.data.status,
+    }
+    if (v.data.status === "verified") {
+      updatePayload.verified_by = session.sub
+      updatePayload.verified_at = new Date().toISOString()
+    }
+
     // Update reading status
     const { data: updated, error } = await supabase
       .from("readings")
-      .update({ status: v.data.status })
+      .update(updatePayload)
       .eq("id", v.data.reading_id)
       .select()
       .single()
