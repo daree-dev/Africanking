@@ -1,0 +1,111 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Africanking Cooperative Energy API",
+    "version": "1.0.0",
+    "description": "API contract for public and authenticated routes covering cooperatives, members, metering, and energy certificates."
+  },
+  "servers": [
+    {
+      "url": "/api",
+      "description": "Current host API mount"
+    }
+  ],
+  "paths": {
+    "/auth/me": {
+      "get": {
+        "summary": "Get current session profile",
+        "responses": {
+          "200": {
+            "description": "Authenticated session info"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/cooperatives": {
+      "get": {
+        "summary": "List cooperatives",
+        "responses": {
+          "200": {
+            "description": "List of cooperatives"
+          }
+        }
+      },
+      "post": {
+        "summary": "Register a new cooperative",
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Validation error"
+          }
+        }
+      }
+    },
+    "/members": {
+      "get": {
+        "summary": "List cooperative members",
+        "responses": {
+          "200": {
+            "description": "List of members"
+          }
+        }
+      },
+      "post": {
+        "summary": "Add a new cooperative member",
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
+      }
+    },
+    "/readings": {
+      "post": {
+        "summary": "Ingest meter readings",
+        "responses": {
+          "200": {
+            "description": "Readings processed successfully"
+          },
+          "400": {
+            "description": "Invalid payload"
+          }
+        }
+      }
+    },
+    "/certificates": {
+      "get": {
+        "summary": "List issued energy certificates",
+        "responses": {
+          "200": {
+            "description": "List of certificates"
+          }
+        }
+      }
+    },
+    "/certificates/retire": {
+      "post": {
+        "summary": "Retire an energy certificate",
+        "responses": {
+          "200": {
+            "description": "Certificate retired successfully"
+          }
+        }
+      }
+    },
+    "/meters": {
+      "get": {
+        "summary": "List registered meters",
+        "responses": {
+          "200": {
+            "description": "List of meters"
+          }
+        }
+      }
+    }
+  }
+}
