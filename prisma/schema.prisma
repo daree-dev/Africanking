@@ -2,6 +2,12 @@
 // NOTE: This project's canonical schema lives in supabase/schema.sql.
 // This file mirrors the mint_log / credit integrity constraints added for issue #44
 // so Prisma-based tooling sees the same referential integrity guarantees.
+//
+// Issue #45: member identity is normalized. Authentication identities
+// (wallets/credentials) are separated from cooperative membership
+// relationships. Legacy `members` rows are migrated into `member_identities`
+// + `cooperative_memberships` with explicit conflict reporting; the legacy
+// `members` table is kept read-only for a documented sunset period.
 
 generator client {
   provider = "prisma-client-js"
@@ -17,24 +23,66 @@ model Cooperative {
   name      String
   createdAt DateTime @default(now()) @map("created_at")
 
-  members   Member[]
-  readings  Reading[]
-  mints     MintLog[]
+  memberships CooperativeMembership[]
+  readings    Reading[]
+  mints       MintLog[]
 
   @@map("cooperatives")
 }
 
+// Canonical member record: a person/entity, independent of any cooperative.
+// Authentication identities and cooperative memberships both hang off this.
 model Member {
+  id          String   @id @default(uuid())
+  displayName String   @map("display_name")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  identities  MemberIdentity[]
+  memberships CooperativeMembership[]
+  allocations Allocation[]
+  credits     Credit[]
+
+  @@map("members")
+}
+
+// Authentication identity (wallet address or other credential) attached to a
+// canonical member. A wallet may only map to one member.
+enum IdentityType {
+  WALLET
+  EMAIL
+  OTHER
+
+  @@map("identity_type")
+}
+
+model MemberIdentity {
+  id         String       @id @default(uuid())
+  memberId   String       @map("member_id")
+  type       IdentityType @default(WALLET)
+  identifier String
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  member     Member       @relation(fields: [memberId], references: [id])
+
+  @@unique([type, identifier], name: "member_identity_type_identifier_key")
+  @@index([memberId])
+  @@map("member_identities")
+}
+
+// Cooperative membership relationship: a member's participation in a
+// cooperative. A member may belong to multiple cooperatives.
+model CooperativeMembership {
   id            String      @id @default(uuid())
   cooperativeId String      @map("cooperative_id")
-  displayName   String      @map("display_name")
+  memberId      String      @map("member_id")
   createdAt     DateTime    @default(now()) @map("created_at")
 
   cooperative   Cooperative @relation(fields: [cooperativeId], references: [id])
-  allocations   Allocation[]
-  credits       Credit[]
+  member        Member      @relation(fields: [memberId], references: [id])
 
-  @@map("members")
+  @@unique([cooperativeId, memberId], name: "cooperative_membership_coop_member_key")
+  @@index([memberId])
+  @@map("cooperative_memberships")
 }
 
 model Reading {
