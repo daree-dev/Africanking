@@ -250,3 +250,8 @@ Apache-2.0 — See [LICENSE](LICENSE)
 ---
 
 **Built on Stellar · BuenDia Builders 2026**
+
+## Handsoff notes
+
+<!-- handsoff-issue-48 -->
+- #48: [Data] Add data-quality reconciliation reports

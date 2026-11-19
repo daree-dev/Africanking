@@ -1,0 +1,138 @@
+// Prisma schema for the cooperative generation-credit platform.
+//
+// Lifecycle / retention policy (issue #47):
+//   - Cooperatives, members, meters and readings are never hard-deleted by
+//     default. They carry lifecycle timestamps so history and audit trails
+//     survive.
+//   - deactivatedAt: resource is read-only; new writes (ingestion, allocation,
+//     member/meter creation) must be rejected by the application layer.
+//   - archivedAt: resource is retained for audit but hidden from active views.
+//   - deletedAt: soft-delete marker. Permanent deletion is restricted to
+//     platform admins and only after anonymization (see anonymizedAt).
+//   - anonymizedAt: PII has been redacted for a privacy erasure request while
+//     aggregate evidence (readings, allocations) is preserved.
+//
+// Timezone / localization policy (issue #49):
+//   - Each cooperative stores a validated IANA timezone (e.g.
+//     "Europe/Madrid"). The migration default is "UTC" so existing rows keep
+//     their current semantics until an admin sets a local zone.
+//   - All timestamps (createdAt, periodStart, periodEnd, ...) are stored in
+//     UTC. Billing/generation periods are defined as local calendar
+//     boundaries in the cooperative's timezone and then converted to UTC for
+//     storage and aggregation. API aggregation and frontend labels must use
+//     the same period semantics (see lib/periods.ts).
+
+enum LifecycleRole {
+  PLATFORM_ADMIN
+  COOPERATIVE_ADMIN
+  MEMBER
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Cooperative {
+  id            String    @id @default(cuid())
+  name          String
+  // PII-bearing contact fields are cleared on anonymization.
+  contactEmail  String?
+  contactPhone  String?
+  // Validated IANA timezone used to derive local calendar period boundaries.
+  // Defaults to UTC so existing rows are unaffected by the migration.
+  timezone      String    @default("UTC")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Lifecycle flags/timestamps.
+  deactivatedAt DateTime?
+  archivedAt    DateTime?
+  deletedAt     DateTime?
+  anonymizedAt  DateTime?
+
+  members  Member[]
+  meters   Meter[]
+  readings Reading[]
+
+  @@index([deletedAt])
+  @@index([deactivatedAt])
+}
+
+model Member {
+  id             String    @id @default(cuid())
+  cooperativeId  String
+  cooperative    Cooperative @relation(fields: [cooperativeId], references: [id])
+  displayName    String
+  // PII-bearing fields are cleared on anonymization.
+  email          String?
+  phone          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Lifecycle flags/timestamps.
+  deactivatedAt  DateTime?
+  archivedAt     DateTime?
+  deletedAt      DateTime?
+  anonymizedAt   DateTime?
+
+  meters   Meter[]
+  readings Reading[]
+
+  @@index([cooperativeId])
+  @@index([deletedAt])
+}
+
+model Meter {
+  id             String    @id @default(cuid())
+  cooperativeId  String
+  cooperative    Cooperative @relation(fields: [cooperativeId], references: [id])
+  memberId       String?
+  member         Member?   @relation(fields: [memberId], references: [id])
+  serialNumber   String    @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Lifecycle flags/timestamps. Deactivated meters must reject new ingestion.
+  deactivatedAt  DateTime?
+  archivedAt     DateTime?
+  deletedAt      DateTime?
+
+  readings Reading[]
+
+  @@index([cooperativeId])
+  @@index([memberId])
+  @@index([deletedAt])
+}
+
+model Reading {
+  id            String    @id @default(cuid())
+  cooperativeId String
+  cooperative   Cooperative @relation(fields: [cooperativeId], references: [id])
+  meterId       String
+  meter         Meter     @relation(fields: [meterId], references: [id])
+  memberId      String?
+  member        Member?   @relation(fields: [memberId], references: [id])
+  value         Decimal   @db.Decimal(18, 6)
+  // periodStart/periodEnd are stored in UTC but represent local calendar
+  // boundaries in the cooperative's timezone (see lib/periods.ts).
+  periodStart   DateTime
+  periodEnd     DateTime
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Readings are immutable audit evidence: they are archived, never
+  // hard-deleted. deletedAt is reserved for erroneous ingestion and must be
+  // set only by a platform admin, preserving the row for audit.
+  archivedAt    DateTime?
+  deletedAt     DateTime?
+
+  @@index([cooperativeId])
+  @@index([meterId])
+  @@index([memberId])
+  @@index([deletedAt])
+}
