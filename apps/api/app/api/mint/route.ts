@@ -6,6 +6,10 @@ import { requireAuth, isSession } from "@/lib/auth/middleware"
 import { validateBody } from "@/lib/validation/validate"
 import { mintSchema } from "@/lib/validation/schemas"
 import { safeCatchError } from "@/lib/errors/safe-error"
+// Issue #6 — prevent crediting gross generation instead of net surplus
+import { getCreditableKwh, EnergyCalculationError } from "@/lib/domain/energy-calculations"
+// Issue #7 — block unverified readings from minting
+import { assertVerifiedForCrediting, ProvenanceError } from "@/lib/domain/reading-provenance"
 
 async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
   try {
@@ -29,20 +33,46 @@ function getMintableKwh(reading: {
   kwh_injected?: number | null
   kwh_generated?: number | null
   kwh_self_consumed?: number | null
+  kwh_net_surplus?: number | null
 }) {
-  if (reading.kwh_injected != null) {
-    return reading.kwh_injected
+  // Issue #6 — use kwh_net_surplus when available (the canonical creditable quantity)
+  if (reading.kwh_net_surplus != null) {
+    return reading.kwh_net_surplus
   }
 
   if (reading.kwh_generated == null) {
-    throw new Error("Reading is missing both kwh_injected and kwh_generated")
+    throw new EnergyCalculationError("Reading is missing both kwh_net_surplus and kwh_generated")
   }
 
-  if (reading.kwh_self_consumed == null) {
-    throw new Error("Reading requires kwh_self_consumed when kwh_injected is unavailable")
+  const gen = reading.kwh_generated
+  const self = reading.kwh_self_consumed ?? null
+
+  // If a direct injection value exists (from bidirectional meter), use it.
+  if (reading.kwh_injected != null) {
+    // Delegate to getCreditableKwh with the net surplus from kwh_injected
+    return getCreditableKwh({
+      kwh_generated: gen,
+      kwh_self_consumed: self != null ? Math.min(self, gen) : null,
+      kwh_net_surplus: reading.kwh_injected,
+      quality: "measured",
+      surplus_is_derived: false,
+    })
   }
 
-  return Math.max(0, reading.kwh_generated - reading.kwh_self_consumed)
+  if (self == null) {
+    throw new EnergyCalculationError(
+      "Reading requires kwh_self_consumed when kwh_injected and kwh_net_surplus are unavailable"
+    )
+  }
+
+  const surplus = Math.max(0, gen - self)
+  return getCreditableKwh({
+    kwh_generated: gen,
+    kwh_self_consumed: Math.min(self, gen),
+    kwh_net_surplus: surplus,
+    quality: "measured",
+    surplus_is_derived: true,
+  })
 }
 
 async function mintOnChain(
@@ -240,14 +270,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Reading not found" }, { status: 404 })
     }
 
-    if (reading.status !== "pending") {
+    if (reading.status !== "pending" && reading.status !== "verified") {
       return NextResponse.json(
-        { error: `Reading status is '${reading.status}', expected 'pending'` },
+        { error: `Reading status is '${reading.status}', expected 'pending' or 'verified'` },
         { status: 400 }
       )
     }
 
-    const prosumerAddress = reading.prosumers.stellar_address
+    // Issue #7 — block unverified readings from entering the minting workflow.
+    // "pending" readings must be verified by an admin first.
+    try {
+      assertVerifiedForCrediting({
+        source_type: reading.source_type ?? "manual",
+        verification_state: reading.verification_state ?? reading.status,
+        id: reading.id,
+      })
+    } catch (err) {
+      if (err instanceof ProvenanceError) {
+        return NextResponse.json({ error: err.message }, { status: 422 })
+      }
+      throw err
+    }
+
     let kwhAmount: number
 
     try {
@@ -256,6 +300,8 @@ export async function POST(req: NextRequest) {
       const message = err instanceof Error ? err.message : "Invalid reading energy data"
       return NextResponse.json({ error: message }, { status: 400 })
     }
+
+    const prosumerAddress = reading.prosumers.stellar_address
 
     const txHash = await mintOnChain(prosumerAddress, kwhAmount, minterSecret, contractAddress)
 

@@ -23,6 +23,18 @@ export interface Member {
   created_at: string
 }
 
+/** Issue #5 — effective-dated share version for a member */
+export interface MemberShareVersion {
+  id: string
+  member_id: string
+  cooperative_id: string
+  share_percentage: number
+  effective_from: string
+  effective_until: string | null
+  created_by: string
+  created_at: string
+}
+
 export interface Meter {
   id: string
   cooperative_id: string
@@ -40,6 +52,12 @@ export interface Meter {
   created_at: string
 }
 
+/** Issue #7 — source type distinguishes authoritative meter from operational telemetry */
+export type ReadingSourceType = "distributor_meter" | "inverter" | "scada" | "manual"
+
+/** Issue #7 — verification state machine for readings */
+export type VerificationState = "pending" | "verified" | "rejected" | "corrected"
+
 export interface Reading {
   id: string
   prosumer_id: string | null
@@ -47,11 +65,22 @@ export interface Reading {
   cooperative_id: string | null
   kwh_generated: number
   kwh_self_consumed: number | null
+  /** Issue #6 — canonical net surplus quantity */
+  kwh_net_surplus: number | null
   power_watts: number | null
   interval_minutes: number
   reading_date: string | null
   reading_timestamp: string | null
+  /** Issue #7 — provenance fields */
   source: string
+  source_type: ReadingSourceType
+  source_id: string | null
+  ingestion_time: string | null
+  measurement_time: string | null
+  verification_state: VerificationState
+  verified_by: string | null
+  verified_at: string | null
+  corrects_reading_id: string | null
   status: string
   tx_hash: string | null
   created_at: string
@@ -67,7 +96,45 @@ export interface Certificate {
   location: string | null
   mint_tx_hash: string | null
   token_amount: number | null
+  /** Legacy status — use Credit.state for new workflows */
   status: "pending" | "available" | "sold" | "retired"
+  created_at: string
+}
+
+/** Issue #8 — internal credit state machine */
+export type CreditState = "measured" | "validated" | "allocated" | "settled" | "cancelled"
+
+/** Issue #8 — internal credit replacing the external certificate/retirement flow */
+export interface Credit {
+  id: string
+  cooperative_id: string
+  reading_id: string
+  generation_period_start: string
+  generation_period_end: string
+  kwh_generated: number
+  kwh_self_consumed: number
+  kwh_net_surplus: number
+  state: CreditState
+  notes: string | null
+  created_by: string
+  validated_by: string | null
+  validated_at: string | null
+  updated_by: string | null
+  updated_at: string | null
+  created_at: string
+}
+
+/** Issue #8 — per-member allocation row produced by the allocated transition */
+export interface CreditAllocation {
+  id: string
+  credit_id: string
+  member_id: string
+  cooperative_id: string
+  share_version_id: string
+  share_percentage: number
+  allocated_kwh: number
+  allocation_date: string
+  state: CreditState
   created_at: string
 }
 
