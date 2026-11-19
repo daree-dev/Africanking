@@ -5,7 +5,14 @@ import { validateBody } from "@/lib/validation/validate"
 import { createMemberSchema } from "@/lib/validation/schemas"
 import { safeDbError, safeCatchError } from "@/lib/errors/safe-error"
 
-// GET: authenticated, scoped to caller's cooperatives
+const DEPRECATION_HEADERS = {
+  Deprecation: "true",
+  Sunset: "Wed, 31 Dec 2026 23:59:59 GMT",
+  Link: '</api/members>; rel="successor-version"',
+  Warning: '299 - "The /api/prosumers endpoint is deprecated. Use /api/members instead."',
+}
+
+// GET: authenticated, scoped to caller's cooperatives (deprecated: use /api/members)
 export async function GET(req: NextRequest) {
   const session = await requireAuth()
   if (!isSession(session)) return session
@@ -20,24 +27,24 @@ export async function GET(req: NextRequest) {
 
   if (cooperativeId) {
     if (!session.cooperative_ids.includes(cooperativeId)) {
-      return NextResponse.json({ error: "Access denied" }, { status: 403 })
+      return NextResponse.json({ error: "Access denied" }, { status: 403, headers: DEPRECATION_HEADERS })
     }
     query = query.eq("cooperative_id", cooperativeId)
   } else {
     if (session.cooperative_ids.length > 0) {
       query = query.in("cooperative_id", session.cooperative_ids)
     } else {
-      return NextResponse.json([])
+      return NextResponse.json([], { headers: DEPRECATION_HEADERS })
     }
   }
 
   const { data, error } = await query
   if (error) return safeDbError(error)
 
-  return NextResponse.json(data)
+  return NextResponse.json(data, { headers: DEPRECATION_HEADERS })
 }
 
-// POST: admin — adds member to cooperative
+// POST: admin — adds member to cooperative (deprecated: use /api/members)
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
@@ -61,7 +68,7 @@ export async function POST(req: NextRequest) {
 
     if (error) return safeDbError(error)
 
-    return NextResponse.json(data, { status: 201 })
+    return NextResponse.json(data, { status: 201, headers: DEPRECATION_HEADERS })
   } catch (err) {
     return safeCatchError(err)
   }
