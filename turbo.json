@@ -33,6 +33,11 @@
       "persistent": true
     },
     "lint": {
+      "dependsOn": ["^lint"],
+      "outputs": []
+    },
+    "type-check": {
+      "dependsOn": ["^type-check"],
       "outputs": []
     }
   }

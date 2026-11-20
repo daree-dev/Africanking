@@ -203,6 +203,58 @@ cargo test
 
 ---
 
+## Security Architecture — Threat Model
+
+Africanking combines cooperative data, wallet identity, service-role database access, and a server-side minter key. This section is the maintained threat model for those trust boundaries. It is scoped to the current cooperative-management direction: generation credits are assigned to cooperative members. It is **not** an external certificate marketplace and makes **no** I-REC/ESG certification claim.
+
+### Assets
+
+| Asset | Where it lives | Why it matters |
+|-------|----------------|----------------|
+| Cooperative & member records | Supabase (Postgres) | Tenant data; cross-tenant reads are a breach |
+| Meter readings (ingestion) | Supabase + API | Source of truth for generation credits |
+| Generation credits / proto-certificates | `energy_token` (SEP-41) on Stellar | On-chain value assigned to members |
+| Member allocation state | `energy_distribution` contract | Determines who receives credits |
+| Governance proposals | `community_governance` contract | Cooperative decisions |
+| Minter key | Server-side secret (API env) | Can mint credits — highest-value secret |
+| Service-role DB key | Server-side secret (API env) | Bypasses row-level security |
+| Session JWTs | Client + API | Identity for all authenticated routes |
+
+### Trust boundaries
+
+1. **Browser ↔ API** — untrusted client; every request is authenticated and tenant-scoped server-side.
+2. **API ↔ Supabase** — API holds the service-role key; RLS is bypassed here, so tenant scoping must be enforced in API code.
+3. **API ↔ Stellar (minter)** — server-side minter key signs mint/burn; never exposed to clients.
+4. **Meter/IoT ↔ Ingestion API** — external device input; treated as untrusted until validated.
+5. **Cooperative tenant ↔ cooperative tenant** — logical isolation enforced by cooperative ID on every query.
+
+### Threat actors
+
+- **Anonymous internet attacker** — probes auth and ingestion endpoints.
+- **Authenticated member of another cooperative** — attempts cross-tenant access (IDOR).
+- **Malicious/compromised meter** — submits forged or inflated readings.
+- **Insider / compromised admin** — abuses privileged review, minting, or admin actions.
+- **Leaked-secret attacker** — obtains minter or service-role key.
+
+### Abuse cases, mitigations, and verification
+
+| Flow | Abuse case | Mitigation | Verification evidence |
+|------|-----------|------------|-----------------------|
+| **Authentication** | Forged/replayed JWT; wallet challenge replay | JWT verified server-side on every route; wallet challenge is single-use and signature-checked | Auth route tests + wallet challenge-response tests |
+| **Authentication** | Cross-tenant access via guessed IDs | Every query scoped by authenticated cooperative ID; service-role queries never trust client-supplied tenant | Tenant-isolation tests on API routes |
+| **Ingestion** | Forged/inflated meter readings | Meter authenticated; readings validated (range, monotonicity, period) before persistence | Ingestion validation tests |
+| **Review** | Member approves own or foreign-cooperative submission | Review actions require reviewer role within the same cooperative; separation of submit vs. approve | Review authorization tests |
+| **Minting** | Unauthorized or duplicate mint | Mint only via server-side minter key after review; idempotency on reading ID; `energy_token` mint restricted to minter authority | Contract tests (`energy_token`) + mint idempotency tests |
+| **Minting** | Minter key leak | Key stored only in server env, never shipped to client; rotation runbook | Secret-scanning CI + key-rotation operational control |
+| **Administration** | Privilege escalation / destructive admin action | Admin actions role-gated and audited; service-role key server-only | Admin authorization tests + audit-log operational control |
+| **Contracts** | Unauthorized allocation or governance change | `energy_distribution` and `community_governance` enforce caller authorization | Contract tests for both contracts |
+
+### Review process
+
+This threat model is reviewed and updated **whenever a new data source or privileged action is introduced** (new ingestion source, new admin/review/mint capability, new contract method, or new secret). Each high-risk scenario above must link to an automated test or an operational control; a change that adds a privileged action without such evidence is not mergeable.
+
+---
+
 ## Roadmap
 
 | Level | What | Status |
@@ -215,38 +267,4 @@ cargo test
 
 ## Planned Stellar Ecosystem Integrations
 
-Africanking is designed to plug into Stellar's growing DeFi and payments ecosystem. Planned integrations from the [SCF Integration Track](https://stellar.gitbook.io/scf-handbook/scf-awards/build-award/integration-track/integration-list):
-
-| Integration | What it unlocks for Africanking |
-|-------------|------------------------------|
-| **[DeFindex](https://defindex.io)** | Cooperatives earn yield on certificate proceeds held in vaults — idle capital works while certificates wait for buyers |
-| **[Blend Protocol](https://blend.capital)** | Use certificates as collateral for credit lines — cooperatives access working capital without selling |
-| **USDC (Circle)** | Stablecoin payments for certificate purchases — buyers pay in USDC, cooperatives receive USDC, no FX volatility |
-| **[Aquarius](https://aquarius.network)** | Liquidity incentives for BETOKEN/USDC pairs — bootstraps the certificate secondary market |
-| **Fiat On/Off Ramp (SEP-24)** | Cooperatives receive payments in local fiat (ARS, COP, BRL) via Stellar anchors — no crypto knowledge required |
-| **[Stellar Turrets / smart oracles](https://tss.stellar.org)** | Automated certificate minting triggered by verified IoT meter readings — removes manual intervention |
-
-These integrations are load-bearing features on the product roadmap, not checkbox items. DeFindex is the most immediate — partial integration already exists in the codebase.
-
----
-
-## Contributing
-
-PRs welcome. Branch to `develop`, keep commits focused.
-
-```bash
-git checkout develop
-git checkout -b feat/your-feature
-pnpm install && pnpm dev
-# Open PR to develop
-```
-
----
-
-## License
-
-Apache-2.0 — See [LICENSE](LICENSE)
-
----
-
-**Built on Stellar · BuenDia Builders 2026**
+Africanking is designed to plug into the wider Stellar ecosystem as the cooperative-credit model matures.
