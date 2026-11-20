@@ -67,7 +67,11 @@ export const createReadingSchema = z.object({
   kwh_generated: z.number().positive().lt(1000).optional(),
   kwh_consumed: z.number().min(0).optional(),
   kwh_self_consumed: z.number().min(0).optional(),
-  reading_date: z.string().optional(),
+  reading_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "reading_date must be YYYY-MM-DD").optional(),
+  /**
+   * ISO 8601 with timezone offset. The API normalizes to UTC; the original
+   * offset is preserved in reading_timestamp_source for traceability.
+   */
   reading_timestamp: z.string().optional(),
   power_watts: z.number().min(0).optional(),
   interval_minutes: z.number().int().positive().default(15),
@@ -88,14 +92,36 @@ export const createReadingSchema = z.object({
       message: "kwh_self_consumed required when kwh_injected is missing",
     })
   }
+
+  if (d.reading_timestamp) {
+    const ts = new Date(d.reading_timestamp)
+    if (isNaN(ts.getTime())) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "reading_timestamp is not a valid ISO 8601 datetime",
+      })
+    } else if (ts > new Date()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "reading_timestamp must not be in the future",
+      })
+    }
+  }
 })
 
 // Batch meter readings
-const singleMeterReading = z.object({
+export const singleMeterReading = z.object({
   kwh_injected: z.number().positive().lt(1000).optional(),
   kwh_generated: z.number().positive().lt(1000).optional(),
+  /**
+   * ISO 8601 timestamp with timezone offset (e.g. "2025-06-01T12:00:00-03:00").
+   * The API will normalize this to UTC and store the original offset for traceability.
+   */
   reading_timestamp: z.string().optional(),
-  reading_date: z.string().optional(),
+  /**
+   * Calendar date in YYYY-MM-DD format for daily summaries.
+   */
+  reading_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "reading_date must be YYYY-MM-DD").optional(),
   power_watts: z.number().min(0).optional(),
   interval_minutes: z.number().int().positive().optional(),
   kwh_self_consumed: z.number().min(0).optional(),
@@ -113,10 +139,31 @@ const singleMeterReading = z.object({
       message: "kwh_self_consumed required when kwh_injected is missing",
     })
   }
+
+  if (d.reading_timestamp) {
+    const ts = new Date(d.reading_timestamp)
+    if (isNaN(ts.getTime())) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "reading_timestamp is not a valid ISO 8601 datetime",
+      })
+    } else if (ts > new Date()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "reading_timestamp must not be in the future",
+      })
+    }
+  }
 })
 
 export const bulkMeterReadingsSchema = z.object({
   meter_id: uuid,
+  /**
+   * Semantics: partial acceptance.
+   * Each item is validated independently. Valid items are committed atomically
+   * with their idempotency record; invalid items are reported with their index
+   * and reason but do not prevent acceptance of other items.
+   */
   readings: z.array(singleMeterReading).min(1).max(1000),
 })
 
