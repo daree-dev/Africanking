@@ -230,9 +230,18 @@ These integrations are load-bearing features on the product roadmap, not checkbo
 
 ---
 
+## Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [Local Development Guide](docs/dev-guide.md) | Install, environment variables, database setup, ports, contract toolchain, troubleshooting |
+| [Data Dictionary](docs/data-dictionary.md) | Table-by-table schema reference, units, status transitions, migration workflow |
+| [API Auth & Error Semantics](docs/api-auth.md) | Login flows, session behavior, role/action matrix, error codes |
+| [Contributor Guide](docs/contributing.md) | Branch policy, issue claiming, PR workflow, test commands |
+
 ## Contributing
 
-PRs welcome. Branch to `develop`, keep commits focused.
+PRs welcome. Branch from `develop` and open your PR back to `develop`. See [docs/contributing.md](docs/contributing.md) for the full workflow.
 
 ```bash
 git checkout develop

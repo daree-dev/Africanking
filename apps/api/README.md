@@ -15,3 +15,9 @@ To proxy to another API origin, set `API_URL` in the frontend environment. Use t
 Deploy this directory as a separate Next.js project with the API environment variables from `.env.example`. Set `API_URL` in the frontend deployment to the deployed API origin. The browser continues to use same-origin `/api/*` requests through the frontend proxy, including the HTTP-only session cookie.
 
 Run API route tests with `corepack pnpm --filter @be-energy/api test:api`.
+
+## Further reading
+
+- [Authentication, authorization, and error semantics](../../docs/api-auth.md)
+- [Data dictionary and migration ownership](../../docs/data-dictionary.md)
+- [Local development guide](../../docs/dev-guide.md)
