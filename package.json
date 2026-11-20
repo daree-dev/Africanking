@@ -10,7 +10,8 @@
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "simulate": "npx tsx scripts/simulate-testnet.ts",
     "meter:mock": "npx tsx scripts/smart-meter-mock.ts --continuous",
-    "meter:mock:backfill": "npx tsx scripts/smart-meter-mock.ts --backfill"
+    "meter:mock:backfill": "npx tsx scripts/smart-meter-mock.ts --backfill",
+    "manifest": "npx tsx scripts/generate-manifest.ts"
   },
   "devDependencies": {
     "prettier": "^3.5.3",

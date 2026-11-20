@@ -1,6 +1,6 @@
 # Africanking
 
-> **Renewable energy cooperatives deserve proof. Africanking puts it on-chain.**
+> **BeEnergy — cooperative generation credit management on Stellar.**
 
 [![Live Demo](https://img.shields.io/badge/🌐_Live_Demo-be--energy--six.vercel.app-00537A?style=for-the-badge)](https://be-energy-six.vercel.app)
 [![Network](https://img.shields.io/badge/Stellar-Testnet-FFD500?style=for-the-badge&logo=stellar)](https://stellar.org)
@@ -8,12 +8,7 @@
 
 ---
 
-> ### ⚠️ Estado actual (pivot en curso — leer antes de lo demás)
-> Africanking está pivoteando el modelo de producto. El flujo de "comprador externo / certificado vendido a ESG" y cualquier mercado secundario descritos más abajo **no son el rumbo actual** — se descartaron junto con el marketplace P2P. La nueva dirección: software de gestión de créditos de generación compartida para cooperativas eléctricas (foco Argentina, referencia: Exa Energia en Brasil). El resto de este README todavía no está actualizado al pivot — se está reescribiendo por partes. No asumir que lo de abajo describe el producto que se está construyendo hoy.
-
----
-
-## 🏆 Recognition
+## Recognition
 
 | Award | Event |
 |-------|-------|
@@ -25,116 +20,102 @@
 
 ## The Problem
 
-Renewable energy cooperatives generate clean energy every day — but **they can't prove it**.
+Electricity cooperatives in Argentina generate renewable energy and share it among members under Ley 27.424. Splitting that generation fairly and verifiably is still a manual, spreadsheet-driven process:
 
-- No standardized way to record generation
-- No verifiable certificate that travels with the energy claim
-- No access to ESG markets, carbon offsetting programs, or institutional buyers
-- Manual, paper-based processes that nobody trusts
+- No standardized way to record per-member generation credits
+- No verifiable, auditable record that members can inspect independently
+- Paper-based billing reconciliation that is slow and error-prone
+- No digital tooling equivalent to what the Brazilian market already has (Exa Energia, Nex Energy)
 
-Meanwhile, companies and funds with ESG commitments are actively looking for verifiable renewable energy claims — and can't find them.
-
-**The gap between cooperatives and buyers is a trust gap. Africanking closes it.**
+BeEnergy closes that gap.
 
 ---
 
 ## The Solution
 
-Africanking is a cooperative management dashboard + on-chain certification infrastructure on **Stellar**.
+BeEnergy is a cooperative management dashboard combined with on-chain generation credit infrastructure on **Stellar**.
 
-Every kWh registered by a cooperative becomes a **proto-certificate**: a verifiable, on-chain claim tied to a real meter, a real cooperative, and a real time period.
+Each kWh recorded by a cooperative becomes a **generation credit**: a verifiable, on-chain record tied to a real meter, a real cooperative, and a real time period — assigned proportionally to the cooperative's members.
 
 ```
 Smart meter sends reading → POST /api/meters/readings
          ↓
-Africanking validates & mints token on Stellar (1 token = 1 kWh)
+BeEnergy validates & mints a generation credit on Stellar (1 token = 1 kWh)
          ↓
-Certificate is assigned to cooperative members
+Credit is distributed to cooperative members by participation %
          ↓
-External buyer (company / ESG fund) purchases certificate
+Each member can verify their balance on-chain
          ↓
-Buyer retires certificate on-chain (verifiable burn)
-         ↓
-Permanent, auditable proof on Stellar blockchain
+Credit backs the member's billing adjustment — auditable, immutable
 ```
 
-No intermediaries. No PDFs. No trust required — the chain is the proof.
+The credit stays inside the cooperative. It is a record of generation and allocation, not a product sold to an external buyer.
+
+> **What BeEnergy records are not:** A BeEnergy token is not an I-REC, not an ESG certificate, and not a Scope 2 claim. I-REC certificates in Argentina are issued by IRAM and registered in Evident — a separate system. See `docs/domain-model.md`.
 
 ---
 
-## How It Works — Full Platform Flow
+## How It Works
 
 ### For Cooperatives
 
 ```
-1. Register cooperative on Africanking
-2. Add smart meters (physical IoT devices)
+1. Register the cooperative on BeEnergy
+2. Add smart meters (or use the testnet meter simulator)
 3. Meters send generation readings automatically via API
-4. Africanking mints proto-certificates on Stellar
-5. Manage members, view generation stats, track certificates
+4. BeEnergy records generation credits on Stellar and distributes them to members
+5. Manage members, view generation stats, track credit history
 ```
 
 ### Authentication
 
-Africanking supports two access methods — no setup required to try:
+BeEnergy supports two access methods:
 
-**Email + Password** (for admins, buyers, internal team)
+**Email + OTP** (for cooperative admins and members)
 ```
-/login → Supabase auth → JWT issued → Stellar wallet auto-assigned → /dashboard
+/login → OTP sent → verified → JWT issued → /dashboard
 ```
-> Try it: `demo@beenergy.coop` / `Demo2026!`
+> Demo: `demo@beenergy.coop` / `Demo2026!`
 
-**Stellar Wallet** (for cooperatives with Freighter / xBull / Lobstr)
+**Stellar Wallet** (for members with Freighter / xBull / Lobstr)
 ```
 Connect wallet → Server issues challenge → User signs with private key
 → Signature verified on-chain → JWT issued → /dashboard
 ```
 
-Both methods issue the same JWT and give full platform access. Wallet users can additionally sign on-chain transactions.
+Both methods issue the same JWT and give full platform access.
 
 ---
 
-## Stellar Integration — What's Actually On-Chain
+## Stellar Integration
 
-This is not a wrapper. Stellar is load-bearing infrastructure:
+Stellar is load-bearing infrastructure, not a wrapper:
 
 | What | How |
 |------|-----|
-| **Certificate issuance** | Mint SEP-41 tokens directly on Stellar Testnet |
-| **Certificate retirement** | On-chain burn, permanently auditable |
+| **Credit issuance** | Mint SEP-41 tokens on Stellar Testnet |
+| **On-chain burn** | Retire a credit (permanently auditable) |
 | **Member allocation** | `energy_distribution` contract splits tokens by participation % |
 | **Governance** | `community_governance` contract for cooperative proposals |
-| **Wallet auth** | Challenge-response signature verification (no gas, no tx) |
+| **Wallet auth** | Challenge-response signature verification |
 | **Token standard** | SEP-41 (fungible) with OpenZeppelin Stellar Pausable + Upgradeable |
 
 ### Deployed Contracts — Stellar Testnet
 
 | Contract | Address | Purpose |
 |----------|---------|---------|
-| `energy_token` | [`CCYOVOFD...MRPBA6`](https://stellar.expert/explorer/testnet/contract/CCYOVOFDJ5BVBSI6HADLWETTUF3BU423MEAWBSBWV2X5UVNKSJMRPBA6) | SEP-41 token — 1 token = 1 kWh certified |
-| `energy_distribution` | [`CBTDPLFN...NX2UDZ`](https://stellar.expert/explorer/testnet/contract/CBTDPLFNFGWVOD4HXDKW4EH5L3D2YGOY5CWTFCJM5TEWFL4VQTNX2UDZ) | Distributes certificates to members |
-| `community_governance` | [`CCH2EXXN...BJD6YI`](https://stellar.expert/explorer/testnet/contract/CCH2EXXNSDW2BAKBIPFAG6CCZS6LV4VJFUP2CZZCW5LEY4JOAXBJD6YI) | Cooperative on-chain governance |
+| `energy_token` | [`CCYOVOFD...MRPBA6`](https://stellar.expert/explorer/testnet/contract/CCYOVOFDJ5BVBSI6HADLWETTUF3BU423MEAWBSBWV2X5UVNKSJMRPBA6) | SEP-41 token — 1 token = 1 kWh generation credit |
+| `energy_distribution` | [`CBTDPLFN...NX2UDZ`](https://stellar.expert/explorer/testnet/contract/CBTDPLFNFGWVOD4HXDKW4EH5L3D2YGOY5CWTFCJM5TEWFL4VQTNX2UDZ) | Distributes credits to members proportionally |
+| `community_governance` | [`CCH2EXXN...BJD6YI`](https://stellar.expert/explorer/testnet/contract/CCH2EXXNSDW2BAKBIPFAG6CCZS6LV4VJFUP2CZZCW5LEY4JOAXBJD6YI) | Cooperative on-chain governance (proposals; voting WIP) |
 
 Built with **OpenZeppelin Stellar Contracts v0.5.1** + **Soroban SDK 23.1.0** — 65 tests passing.
 
 ---
 
-## Customer Discovery
-
-We validated the problem directly with:
-
-- **Energy cooperatives** in Argentina — confirmed the pain of not being able to sell renewable attributes
-- **ESG compliance teams** — confirmed demand for verifiable, auditable certificates
-- **Climate program coordinators** — confirmed interest in blockchain-based proof over PDFs
-
-Key insight: the bottleneck isn't production — cooperatives generate plenty. The bottleneck is **verifiable proof**. Africanking solves exactly that.
-
----
-
 ## Live Demo
 
-**Platform:** https://be-energy-six.vercel.app
-**Network:** Stellar Testnet
+**Platform:** https://be-energy-six.vercel.app  
+**Network:** Stellar Testnet  
 **Demo login:** `demo@beenergy.coop` / `Demo2026!`
 
 **[Watch Demo Video →](https://www.youtube.com/watch?v=c5avxNUI18Y)**
@@ -150,7 +131,7 @@ Key insight: the bottleneck isn't production — cooperatives generate plenty. T
 | Token Standard | SEP-41 fungible token |
 | Frontend | Next.js 16 + React 19 + TypeScript |
 | Styling | Tailwind CSS v4 + shadcn/ui |
-| Auth | Supabase + JWT + Stellar wallet signature |
+| Auth | JWT + Stellar wallet signature challenge |
 | Wallet Support | Freighter, xBull, Lobstr (via Stellar Wallets Kit) |
 | Backend | Standalone Next.js API service + Supabase |
 | Deployment | Vercel |
@@ -164,41 +145,58 @@ Key insight: the bottleneck isn't production — cooperatives generate plenty. T
 Africanking/
 ├── apps/
 │   ├── contracts/           # Soroban smart contracts (Rust)
-│   │   ├── energy_token/         # SEP-41 certificate token
+│   │   ├── energy_token/         # SEP-41 generation credit token
 │   │   ├── energy_distribution/  # Member allocation logic
-│   │   └── community_governance/ # DAO-style proposals
-│   ├── api/                  # Standalone Next.js API service
-│   └── web/                  # Next.js dashboard
+│   │   ├── community_governance/ # Cooperative proposals (voting WIP)
+│   │   └── cooperative_factory/  # Factory for per-coop deployments (implemented, not deployed)
+│   ├── api/                 # Standalone Next.js API service (port 3001)
+│   └── web/                 # Next.js dashboard (port 3000)
 │       ├── app/             # App Router pages
 │       ├── components/      # UI components
 │       └── lib/             # Auth, wallet, Stellar utils
 ├── packages/
 │   └── stellar/             # Shared wallet & config utilities
+├── scripts/
+│   ├── generate-manifest.ts # Build provenance manifest
+│   ├── smart-meter-mock.ts  # Meter simulator (testnet)
+│   └── simulate-testnet.ts  # Testnet simulation (legacy)
+├── docs/
+│   ├── domain-model.md          # Legal/regulatory model for Argentina GD
+│   ├── architecture-map.md      # Service boundaries, routes, responsibility map
+│   └── releases/
+│       ├── api-rollout-policy.md    # Expand-migrate-contract, deprecation policy
+│       └── build-provenance.md      # Release manifest and /api/health
 └── tooling/
-    └── issues/              # GitHub issue templates
 ```
+
+For a detailed service map, routes, and data ownership, see [`docs/architecture-map.md`](docs/architecture-map.md).
 
 ---
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/BuenDia-Builders/Africanking.git
+git clone https://github.com/daree-dev/Africanking.git
 cd Africanking
 pnpm install
-# Set required backend values in apps/api/.env.local using apps/api/.env.example
+# Copy and fill required values
+cp apps/api/.env.example apps/api/.env.local
 pnpm dev
 ```
 
-Frontend: `http://localhost:3000`
+Frontend: `http://localhost:3000`  
+API: `http://localhost:3001`
 
-API: `http://localhost:3001` (the frontend proxies `/api/*` to the API service)
-
-**Build & test contracts:**
+**Build and test contracts:**
 ```bash
 cd apps/contracts
 stellar contract build
 cargo test
+```
+
+**Generate release manifest:**
+```bash
+pnpm manifest
 ```
 
 ---
@@ -207,32 +205,26 @@ cargo test
 
 | Level | What | Status |
 |-------|------|--------|
-| 1 — Internal registry | Token = verifiable production record | ✅ Live on Testnet |
-| 2 — Verified certification | IoT oracles + independent meter validation | 🔄 Next |
-| 3 — Recognized standard | Integration with I-REC, Energy Web, TIGR | 🔮 Future |
+| 1 — Internal registry | Generation credit = verifiable production record assigned to members | ✅ Live on Testnet |
+| 2 — Verified data | IoT oracle integration + independent meter validation | 🔄 Next |
+| 3 — Recognized standard | Optional path toward I-REC / Energy Web integration | 🗓 Future (not current focus) |
+
+Level 3 is an option, not a commitment. BeEnergy is not an I-REC issuer and does not claim to be one. Any future integration with recognized standards would go through IRAM as the authorized Argentine body.
 
 ---
 
-## Planned Stellar Ecosystem Integrations
+## Model of record
 
-Africanking is designed to plug into Stellar's growing DeFi and payments ecosystem. Planned integrations from the [SCF Integration Track](https://stellar.gitbook.io/scf-handbook/scf-awards/build-award/integration-track/integration-list):
+BeEnergy generates revenue from two sources, neither of which involves selling credits to external buyers:
 
-| Integration | What it unlocks for Africanking |
-|-------------|------------------------------|
-| **[DeFindex](https://defindex.io)** | Cooperatives earn yield on certificate proceeds held in vaults — idle capital works while certificates wait for buyers |
-| **[Blend Protocol](https://blend.capital)** | Use certificates as collateral for credit lines — cooperatives access working capital without selling |
-| **USDC (Circle)** | Stablecoin payments for certificate purchases — buyers pay in USDC, cooperatives receive USDC, no FX volatility |
-| **[Aquarius](https://aquarius.network)** | Liquidity incentives for BETOKEN/USDC pairs — bootstraps the certificate secondary market |
-| **Fiat On/Off Ramp (SEP-24)** | Cooperatives receive payments in local fiat (ARS, COP, BRL) via Stellar anchors — no crypto knowledge required |
-| **[Stellar Turrets / smart oracles](https://tss.stellar.org)** | Automated certificate minting triggered by verified IoT meter readings — removes manual intervention |
-
-These integrations are load-bearing features on the product roadmap, not checkbox items. DeFindex is the most immediate — partial integration already exists in the codebase.
+1. **SaaS subscription** — cooperative pays for the management dashboard (Starter, Pro, Enterprise plans).
+2. **Management fee** — per the Exa Energia model (Brazil reference), a fee for running credit allocation, billing support, and liquidation on behalf of the cooperative.
 
 ---
 
 ## Contributing
 
-PRs welcome. Branch to `develop`, keep commits focused.
+PRs welcome. Branch from `develop`, keep commits focused.
 
 ```bash
 git checkout develop
