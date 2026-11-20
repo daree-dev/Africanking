@@ -67,15 +67,30 @@ export interface Certificate {
   location: string | null
   mint_tx_hash: string | null
   token_amount: number | null
-  status: "pending" | "available" | "sold" | "retired"
+  /**
+   * "sold" is a retired marketplace concept. Historic records may carry this
+   * status; active cooperative flows use "pending" | "available" | "retired".
+   * @deprecated Use "retired" for new cooperative member allocations.
+   */
+  status: "pending" | "available" | "retired" | "sold"
   created_at: string
 }
 
 export interface Retirement {
   id: string
   certificate_id: string
+  /**
+   * @deprecated buyer_address is a retired marketplace concept. Retained for
+   * historic audit records. New cooperative retirements set this to the
+   * cooperative admin's Stellar address.
+   */
   buyer_address: string
+  /** @deprecated See buyer_address */
   buyer_name: string | null
+  /**
+   * Purpose codes retained for historic records; new cooperative flows do not
+   * expose esg_reporting / carbon_offset in the member-facing UI.
+   */
   buyer_purpose:
     | "esg_reporting"
     | "carbon_offset"

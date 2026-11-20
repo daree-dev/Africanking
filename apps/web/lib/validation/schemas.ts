@@ -90,8 +90,24 @@ export const createReadingSchema = z.object({
   }
 })
 
-// Batch meter readings
-const singleMeterReading = z.object({
+// ---- Versioned meter ingestion contract (issue #11) ----------------------
+
+/**
+ * Supported ingestion schema versions.
+ * - v1: original schema (meter_id + readings array)
+ * - v2: adds source_event_id per reading and source_metadata envelope
+ */
+export const SUPPORTED_METER_INGESTION_VERSIONS = ["v1", "v2"] as const
+export type MeterIngestionVersion = (typeof SUPPORTED_METER_INGESTION_VERSIONS)[number]
+
+const meterIngestionVersion = z.enum(SUPPORTED_METER_INGESTION_VERSIONS, {
+  errorMap: () => ({
+    message: `Unsupported schema version. Supported versions: ${SUPPORTED_METER_INGESTION_VERSIONS.join(", ")}`,
+  }),
+})
+
+/** V1 reading — original fields, backward-compatible */
+const meterReadingV1 = z.object({
   kwh_injected: z.number().positive().lt(1000).optional(),
   kwh_generated: z.number().positive().lt(1000).optional(),
   reading_timestamp: z.string().optional(),
@@ -101,23 +117,76 @@ const singleMeterReading = z.object({
   kwh_self_consumed: z.number().min(0).optional(),
 }).superRefine((d, ctx) => {
   if (d.kwh_injected == null && d.kwh_generated == null) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "kwh_injected or kwh_generated required",
-    })
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "kwh_injected or kwh_generated required" })
   }
-
   if (d.kwh_injected == null && d.kwh_generated != null && d.kwh_self_consumed == null) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "kwh_self_consumed required when kwh_injected is missing",
-    })
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "kwh_self_consumed required when kwh_injected is missing" })
   }
 })
 
-export const bulkMeterReadingsSchema = z.object({
+/** V2 reading — adds stable source identity for idempotency */
+const meterReadingV2 = meterReadingV1.extend({
+  /**
+   * Stable event ID emitted by the device or HES/MDM.
+   * Used as the idempotency key alongside meter_id + interval.
+   * Required for v2.
+   */
+  source_event_id: z.string().min(1).max(200),
+  /**
+   * Freeform source metadata (device firmware, protocol version, etc.).
+   * Stored verbatim for audit; not used in business logic.
+   */
+  source_metadata: z.record(z.unknown()).optional(),
+})
+
+/** V1 bulk ingestion envelope */
+export const bulkMeterReadingsSchemaV1 = z.object({
+  schema_version: z.literal("v1"),
   meter_id: uuid,
-  readings: z.array(singleMeterReading).min(1).max(1000),
+  readings: z.array(meterReadingV1).min(1).max(1000),
+})
+
+/** V2 bulk ingestion envelope */
+export const bulkMeterReadingsSchemaV2 = z.object({
+  schema_version: z.literal("v2"),
+  /**
+   * Stable meter identity — preferred over meter_id for new integrations.
+   * Either meter_id or (serial_number + cooperative_id) must be supplied.
+   */
+  meter_id: uuid.optional(),
+  serial_number: z.string().max(200).optional(),
+  cooperative_id: uuid.optional(),
+  readings: z.array(meterReadingV2).min(1).max(1000),
+}).refine(
+  (d) => d.meter_id || (d.serial_number && d.cooperative_id),
+  { message: "meter_id or (serial_number + cooperative_id) required" }
+)
+
+/**
+ * Top-level versioned ingestion schema.
+ * Rejects unknown versions with a machine-readable error before parsing.
+ */
+export const versionedBulkMeterReadingsSchema = z
+  .object({ schema_version: meterIngestionVersion })
+  .passthrough()
+  .superRefine((d, ctx) => {
+    if (d.schema_version === "v1") {
+      const r = bulkMeterReadingsSchemaV1.safeParse(d)
+      if (!r.success) {
+        r.error.issues.forEach((i) => ctx.addIssue(i))
+      }
+    } else if (d.schema_version === "v2") {
+      const r = bulkMeterReadingsSchemaV2.safeParse(d)
+      if (!r.success) {
+        r.error.issues.forEach((i) => ctx.addIssue(i))
+      }
+    }
+  })
+
+// Keep legacy export for backward-compatibility with existing callers
+export const bulkMeterReadingsSchema = bulkMeterReadingsSchemaV1.omit({ schema_version: true }).extend({
+  schema_version: z.literal("v1").default("v1"),
+  meter_id: uuid,
 })
 
 // Certificates
@@ -160,4 +229,40 @@ export const retireSchema = z.object({
     "regulatory_compliance",
     "other",
   ]),
+})
+
+// ---- Settlement (issue #9) ------------------------------------------------
+
+export const settlementStatusEnum = z.enum([
+  "draft",
+  "pending",
+  "approved",
+  "corrected",
+  "closed",
+])
+
+/** Create or open a new settlement period */
+export const createSettlementPeriodSchema = z.object({
+  cooperative_id: uuid,
+  period_start: z.string().datetime({ offset: true }).or(z.string().date()),
+  period_end: z.string().datetime({ offset: true }).or(z.string().date()),
+}).refine(
+  (d) => d.period_start <= d.period_end,
+  { message: "period_start must be before or equal to period_end" }
+)
+
+/** Transition a settlement to a new status and record the approver */
+export const updateSettlementStatusSchema = z.object({
+  settlement_id: uuid,
+  status: settlementStatusEnum,
+  /** Required when status is 'approved' or 'corrected' */
+  approved_by: z.string().nullish(),
+})
+
+/** Record a correction to a member's allocation inside a settlement */
+export const createSettlementAdjustmentSchema = z.object({
+  settlement_id: uuid,
+  member_stellar_address: stellarAddress,
+  corrected_kwh: z.number().nonnegative(),
+  reason: z.string().min(1).max(500),
 })

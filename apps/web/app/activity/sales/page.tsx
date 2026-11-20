@@ -69,7 +69,8 @@ export default function SalesPage() {
                 </div>
                 <div>
                   <CardTitle className="text-xl md:text-2xl">{t("activity.sent")}</CardTitle>
-                  <CardDescription>{t("activity.sentDescription")}</CardDescription>
+                  {/* Legacy read-only Stellar Horizon audit record — not a P2P marketplace */}
+                  <CardDescription>{t("activity.sentDescription")} · {t("activity.horizonAuditNote")}</CardDescription>
                 </div>
               </div>
             </CardHeader>

@@ -69,7 +69,8 @@ export default function PurchasesPage() {
                 </div>
                 <div>
                   <CardTitle className="text-xl md:text-2xl">{t("activity.received")}</CardTitle>
-                  <CardDescription>{t("activity.receivedDescription")}</CardDescription>
+                  {/* Legacy read-only Stellar Horizon audit record — not a P2P marketplace */}
+                  <CardDescription>{t("activity.receivedDescription")} · {t("activity.horizonAuditNote")}</CardDescription>
                 </div>
               </div>
             </CardHeader>
