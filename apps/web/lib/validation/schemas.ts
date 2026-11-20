@@ -88,6 +88,14 @@ export const createReadingSchema = z.object({
       message: "kwh_self_consumed required when kwh_injected is missing",
     })
   }
+
+  const selfConsumed = d.kwh_self_consumed ?? d.kwh_consumed
+  if (d.kwh_generated != null && selfConsumed != null && selfConsumed > d.kwh_generated) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "kwh_self_consumed cannot exceed kwh_generated",
+    })
+  }
 })
 
 // Batch meter readings
@@ -111,6 +119,13 @@ const singleMeterReading = z.object({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "kwh_self_consumed required when kwh_injected is missing",
+    })
+  }
+
+  if (d.kwh_generated != null && d.kwh_self_consumed != null && d.kwh_self_consumed > d.kwh_generated) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "kwh_self_consumed cannot exceed kwh_generated",
     })
   }
 })
