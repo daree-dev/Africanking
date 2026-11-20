@@ -152,6 +152,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Normalize timestamp to UTC; preserve source offset for traceability (issue #14)
+    let normalizedTimestamp: string | null = null
+    let sourceTimestamp: string | null = null
+    if (reading_timestamp) {
+      const ts = new Date(reading_timestamp)
+      if (!isNaN(ts.getTime())) {
+        normalizedTimestamp = ts.toISOString()
+        sourceTimestamp = reading_timestamp
+      }
+    }
+
     const { data: reading, error: insertError } = await supabase
       .from("readings")
       .insert({
@@ -164,7 +175,8 @@ export async function POST(req: NextRequest) {
         power_watts: power_watts ?? null,
         interval_minutes: interval_minutes ?? 15,
         reading_date: reading_date ?? null,
-        reading_timestamp: reading_timestamp ?? null,
+        reading_timestamp: normalizedTimestamp,
+        reading_timestamp_source: sourceTimestamp,
         source: meter_id ? "meter" : "manual",
         status: "pending",
       })
