@@ -10,7 +10,12 @@
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "simulate": "npx tsx scripts/simulate-testnet.ts",
     "meter:mock": "npx tsx scripts/smart-meter-mock.ts --continuous",
-    "meter:mock:backfill": "npx tsx scripts/smart-meter-mock.ts --backfill"
+    "meter:mock:backfill": "npx tsx scripts/smart-meter-mock.ts --backfill",
+    "audit:deps": "pnpm audit --audit-level=high",
+    "audit:rust": "cargo audit"
+  },
+  "pnpm": {
+    "overrides": {}
   },
   "devDependencies": {
     "prettier": "^3.5.3",

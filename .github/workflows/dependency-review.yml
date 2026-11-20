@@ -1,0 +1,135 @@
+name: Dependency & Supply-Chain Review
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: dependency-review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: Review pnpm & Cargo dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency review (pnpm + Cargo lockfiles)
+        uses: actions/dependency-review-action@v4
+        with:
+          # Fail the PR on high/critical advisories; medium is reported only.
+          fail-on-severity: high
+          # Severity SLAs (see docs/SECURITY-SUPPLY-CHAIN.md):
+          #   critical -> patch within 24h, high -> 72h, medium -> 14d, low -> next release
+          comment-summary-in-pr: on-failure
+          # Block copyleft / unknown licenses that are not approved for this repo.
+          allow-licenses: >-
+            MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD,
+            MPL-2.0, Unlicense, CC0-1.0, Zlib, Unicode-DFS-2016
+          # Deny Git-sourced dependencies unless the revision is pinned to a
+          # full 40-char commit SHA (no branches/tags). Approved sources are
+          # recorded in docs/SECURITY-SUPPLY-CHAIN.md.
+          deny-packages: ''
+
+  lockfile-audit:
+    name: Audit lockfiles (pnpm + Cargo)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: pnpm audit (high+)
+        run: pnpm audit --audit-level=high
+        continue-on-error: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: cargo audit
+        run: cargo audit --deny warnings
+
+  git-source-policy:
+    name: Verify Git-sourced contract dependencies are pinned
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enforce pinned Git revisions
+        run: |
+          set -euo pipefail
+          fail=0
+          # Cargo: git dependencies must pin a full 40-char rev.
+          if [ -f Cargo.toml ]; then
+            while IFS= read -r line; do
+              if echo "$line" | grep -q 'git *='; then
+                if ! echo "$line" | grep -Eq 'rev *= *"[0-9a-f]{40}"'; then
+                  echo "::error file=Cargo.toml::Git dependency must pin a full 40-char rev: $line"
+                  fail=1
+                fi
+              fi
+            done < <(grep -n 'git *=' Cargo.toml || true)
+          fi
+          # pnpm/package.json: git URLs must reference a full commit SHA.
+          for pkg in package.json apps/*/package.json; do
+            [ -f "$pkg" ] || continue
+            while IFS= read -r line; do
+              if echo "$line" | grep -Eq 'git\+|github:|gitlab:|bitbucket:'; then
+                if ! echo "$line" | grep -Eq '[0-9a-f]{40}'; then
+                  echo "::error file=$pkg::Git dependency must pin a full 40-char commit SHA: $line"
+                  fail=1
+                fi
+              fi
+            done < <(grep -nE 'git\+|github:|gitlab:|bitbucket:' "$pkg" || true)
+          done
+          exit $fail
+
+  safe-update-verification:
+    name: Safe update verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm -r --if-present run typecheck
+
+      - name: Lint
+        run: pnpm -r --if-present run lint
+
+      - name: Test
+        run: pnpm -r --if-present run test

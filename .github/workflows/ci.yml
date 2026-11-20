@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  secret-scan:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan for committed credentials
+        run: |
+          set -euo pipefail
+          # Fail on common credential patterns in tracked files.
+          # Example env files must only contain placeholders, never real values.
+          PATTERNS='(SUPABASE_SERVICE_ROLE_KEY|SUPABASE_ANON_KEY|NEXT_PUBLIC_SUPABASE_ANON_KEY|DATABASE_URL|PRIVATE_KEY|SECRET_KEY|API_KEY)[[:space:]]*=[[:space:]]*[^[:space:]"'"'"'#]+'
+          if git grep -nIE "$PATTERNS" -- \
+              ':!*.example' ':!*.md' ':!*.lock' ':!package-lock.json' ':!pnpm-lock.yaml' ':!yarn.lock' \
+              | grep -vE '=(your-|placeholder|<|\$\{|example|changeme|xxx)' ; then
+            echo '::error::Potential committed secret detected. Store secrets in GitHub Actions secrets / your host secret manager, never in the repo.'
+            exit 1
+          fi
+          echo 'No committed credentials detected.'
+
+  env-separation:
+    name: Environment separation checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Validate network-specific configuration
+        run: node scripts/check-env-separation.mjs
+
+  client-bundle-check:
+    name: Client bundle server-only leak check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_NETWORK: testnet
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+          SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key
+      - name: Fail if server-only variables leak into client bundle
+        run: node scripts/check-client-bundle.mjs

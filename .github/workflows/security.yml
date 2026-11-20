@@ -1,0 +1,95 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan for committed credentials
+        run: |
+          set -euo pipefail
+          # Fail on common credential patterns in tracked files.
+          # Example env files must never contain real values.
+          PATTERNS='(sk_live_[0-9a-zA-Z]{16,}|sk_test_[0-9a-zA-Z]{16,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|eyJhbGciOi[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})'
+          if git grep -nE "$PATTERNS" -- . ':!*.lock' ':!package-lock.json' ':!pnpm-lock.yaml' ':!yarn.lock'; then
+            echo "::error::Potential secret detected in tracked files. Remove it and rotate the credential."
+            exit 1
+          fi
+          echo "No committed credentials detected."
+
+  client-bundle-check:
+    name: Client bundle server-only check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build client bundle
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+          SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key
+          DATABASE_URL: postgres://placeholder
+      - name: Fail if server-only variables leak into client bundle
+        run: |
+          set -euo pipefail
+          SERVER_ONLY='SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|SUPABASE_DB_PASSWORD|JWT_SECRET|NEXTAUTH_SECRET|STRIPE_SECRET_KEY|PRIVATE_KEY'
+          # Inspect built client assets only (exclude server output).
+          if [ -d .next/static ]; then
+            if grep -rEn "$SERVER_ONLY" .next/static; then
+              echo "::error::Server-only variable name found in client bundle."
+              exit 1
+            fi
+          fi
+          echo "No server-only variable names found in client bundle."
+
+  env-separation:
+    name: Environment separation checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate network-specific configuration
+        run: |
+          set -euo pipefail
+          fail=0
+          check_required() {
+            local file="$1"; shift
+            for var in "$@"; do
+              if ! grep -qE "^${var}=" "$file"; then
+                echo "::error file=$file::Missing required variable ${var}"
+                fail=1
+              fi
+            done
+          }
+          # Example env files must document required variables without real values.
+          for f in .env.example .env.local.example; do
+            [ -f "$f" ] || continue
+            check_required "$f" NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY
+            if grep -qE '^NEXT_PUBLIC_NETWORK=' "$f"; then
+              check_required "$f" NEXT_PUBLIC_NETWORK
+            fi
+          done
+          # Block unsafe production/testnet combinations in committed env files.
+          for f in .env .env.production .env.local; do
+            [ -f "$f" ] || continue
+            if grep -qE '^NEXT_PUBLIC_NETWORK=(testnet|TESTNET)' "$f" && grep -qE '^NODE_ENV=production' "$f"; then
+              echo "::error file=$f::Testnet network configured with production NODE_ENV."
+              fail=1
+            fi
+          done
+          exit $fail
