@@ -203,6 +203,27 @@ cargo test
 
 ---
 
+## Testing
+
+API and web tests run in CI on every pull request (`.github/workflows/ci.yml`).
+The workflow installs with a frozen lockfile (`pnpm install --frozen-lockfile`),
+caches the pnpm store, and fails the PR on any regression.
+
+Run the same focused suites locally from the repository root:
+
+```bash
+# API tests
+pnpm test:api
+
+# Web unit / component tests
+pnpm test:web
+
+# Both (workspace test command)
+pnpm test
+```
+
+---
+
 ## Roadmap
 
 | Level | What | Status |
@@ -215,38 +236,6 @@ cargo test
 
 ## Planned Stellar Ecosystem Integrations
 
-Africanking is designed to plug into Stellar's growing DeFi and payments ecosystem. Planned integrations from the [SCF Integration Track](https://stellar.gitbook.io/scf-handbook/scf-awards/build-award/integration-track/integration-list):
+Africanking is designed to p
 
-| Integration | What it unlocks for Africanking |
-|-------------|------------------------------|
-| **[DeFindex](https://defindex.io)** | Cooperatives earn yield on certificate proceeds held in vaults — idle capital works while certificates wait for buyers |
-| **[Blend Protocol](https://blend.capital)** | Use certificates as collateral for credit lines — cooperatives access working capital without selling |
-| **USDC (Circle)** | Stablecoin payments for certificate purchases — buyers pay in USDC, cooperatives receive USDC, no FX volatility |
-| **[Aquarius](https://aquarius.network)** | Liquidity incentives for BETOKEN/USDC pairs — bootstraps the certificate secondary market |
-| **Fiat On/Off Ramp (SEP-24)** | Cooperatives receive payments in local fiat (ARS, COP, BRL) via Stellar anchors — no crypto knowledge required |
-| **[Stellar Turrets / smart oracles](https://tss.stellar.org)** | Automated certificate minting triggered by verified IoT meter readings — removes manual intervention |
-
-These integrations are load-bearing features on the product roadmap, not checkbox items. DeFindex is the most immediate — partial integration already exists in the codebase.
-
----
-
-## Contributing
-
-PRs welcome. Branch to `develop`, keep commits focused.
-
-```bash
-git checkout develop
-git checkout -b feat/your-feature
-pnpm install && pnpm dev
-# Open PR to develop
-```
-
----
-
-## License
-
-Apache-2.0 — See [LICENSE](LICENSE)
-
----
-
-**Built on Stellar · BuenDia Builders 2026**
+/* … truncated 1684 chars — edit only what you need near the top … */
