@@ -1,21 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import * as StellarSdk from "@stellar/stellar-sdk"
 import { supabase } from "@/lib/supabase"
-import { CONTRACTS, STELLAR_CONFIG, NETWORK_PASSPHRASE } from "@/lib/contracts-config"
+import { CONTRACTS } from "@/lib/contracts-config"
 import { requireAuth, isSession } from "@/lib/auth/middleware"
 import { validateBody } from "@/lib/validation/validate"
 import { mintSchema } from "@/lib/validation/schemas"
-import { safeCatchError } from "@/lib/errors/safe-error"
-
-async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
-  try {
-    return await fn()
-  } catch (err) {
-    console.warn(`[MINT] ${label} failed, retrying in 2s...`, err instanceof Error ? err.message : err)
-    await new Promise((r) => setTimeout(r, 2000))
-    return fn()
-  }
-}
+import { getStellarConfigReport } from "@/server/stellar/network-config"
+import { getTransactionService, isStellarTransactionError } from "@/server/stellar/transaction-service"
+import { transactionErrorResponse } from "@/server/stellar/transaction-response"
 
 async function markFailed(readingId: string, reason: string) {
   await supabase
@@ -45,80 +37,24 @@ function getMintableKwh(reading: {
   return Math.max(0, reading.kwh_generated - reading.kwh_self_consumed)
 }
 
-async function mintOnChain(
-  toAddress: string,
-  amountKwh: number,
-  minterSecret: string,
-  contractAddress: string,
-  onSubmitted?: (hash: string) => Promise<void>
-) {
+function mintArgs(toAddress: string, amountKwh: number, minterPublic: string) {
   const amountInStroops = BigInt(Math.round(amountKwh * 1e7))
-  const server = new StellarSdk.rpc.Server(STELLAR_CONFIG.RPC_URL)
-  const minterKeypair = StellarSdk.Keypair.fromSecret(minterSecret)
-  const minterPublic = minterKeypair.publicKey()
-  const minterAccount = await withRetry(() => server.getAccount(minterPublic), "getAccount")
-  const contract = new StellarSdk.Contract(contractAddress)
-  const maxTime = Math.floor(Date.now() / 1000) + 300
-
-  const transaction = new StellarSdk.TransactionBuilder(minterAccount, {
-    fee: "100000",
-    networkPassphrase: NETWORK_PASSPHRASE,
-    timebounds: { minTime: 0, maxTime },
-  })
-    .addOperation(
-      contract.call(
-        "mint_energy",
-        StellarSdk.nativeToScVal(toAddress, { type: "address" }),
-        StellarSdk.nativeToScVal(amountInStroops, { type: "i128" }),
-        StellarSdk.nativeToScVal(minterPublic, { type: "address" })
-      )
-    )
-    .build()
-
-  const preparedTx = await withRetry(() => server.prepareTransaction(transaction), "prepareTransaction")
-  preparedTx.sign(minterKeypair)
-
-  const sendResult = await withRetry(() => server.sendTransaction(preparedTx), "sendTransaction")
-
-  if (sendResult.status === "ERROR") {
-    throw new Error("Transaction failed to submit")
-  }
-
-  // Record the submitted hash before waiting for confirmation — if the poll below
-  // times out on a slow testnet, the caller can still tell this hash was sent
-  // instead of silently allowing a duplicate mint on retry.
-  if (onSubmitted) {
-    await onSubmitted(sendResult.hash)
-  }
-
-  const MAX_POLL_ATTEMPTS = 90
-  let attempts = 0
-  let txResponse = await server.getTransaction(sendResult.hash)
-  while (txResponse.status === "NOT_FOUND") {
-    if (++attempts >= MAX_POLL_ATTEMPTS) {
-      throw new Error(
-        `Transaction confirmation timeout — tx ${sendResult.hash} was submitted but not yet confirmed. ` +
-          `Check https://stellar.expert/explorer/testnet/tx/${sendResult.hash} before retrying.`
-      )
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-    txResponse = await server.getTransaction(sendResult.hash)
-  }
-
-  if (txResponse.status !== "SUCCESS") {
-    throw new Error(`Transaction failed with status: ${txResponse.status}`)
-  }
-
-  return sendResult.hash
+  return [
+    StellarSdk.nativeToScVal(toAddress, { type: "address" }),
+    StellarSdk.nativeToScVal(amountInStroops, { type: "i128" }),
+    StellarSdk.nativeToScVal(minterPublic, { type: "address" }),
+  ]
 }
 
 // POST: admin — mints tokens for certificate (or legacy reading)
 export async function POST(req: NextRequest) {
   let readingId: string | undefined
+  let actor = "unknown"
 
   try {
     const session = await requireAuth()
     if (!isSession(session)) return session
+    actor = session.sub
 
     const body = await req.json()
     const v = validateBody(mintSchema, body)
@@ -137,6 +73,18 @@ export async function POST(req: NextRequest) {
     if (!contractAddress) {
       console.error("[MINT] ENERGY_TOKEN contract not configured")
       return NextResponse.json({ error: "Server configuration error: missing contract" }, { status: 500 })
+    }
+
+    const stellarConfig = getStellarConfigReport()
+    if (!stellarConfig.writesEnabled) {
+      return NextResponse.json(
+        {
+          error: "Stellar write operations are disabled: configuration is invalid or incomplete",
+          code: "WRITES_DISABLED",
+          config_fingerprint: stellarConfig.fingerprint,
+        },
+        { status: 503 }
+      )
     }
 
     // --- Certificate flow ---
@@ -180,21 +128,39 @@ export async function POST(req: NextRequest) {
         token_contract_address: string | null
       }
       // Custodial model: tokens go to minter (platform holds them)
-      const mintTo = StellarSdk.Keypair.fromSecret(minterSecret).publicKey()
+      const minterKeypair = StellarSdk.Keypair.fromSecret(minterSecret)
+      const mintTo = minterKeypair.publicKey()
       const tokenContract = coop.token_contract_address || contractAddress
 
-      const txHash = await mintOnChain(
-        mintTo,
-        cert.total_kwh,
-        minterSecret,
-        tokenContract,
-        async (submittedHash) => {
-          await supabase
-            .from("certificates")
-            .update({ mint_tx_hash: submittedHash })
-            .eq("id", certificateId)
+      let txHash: string
+      try {
+        const result = await getTransactionService().invokeContract({
+          signer: minterKeypair,
+          contractId: tokenContract,
+          method: "mint_energy",
+          args: mintArgs(mintTo, cert.total_kwh, mintTo),
+          label: `mint:certificate:${certificateId}`,
+          // Record the hash as soon as it may be on-chain so a retry is blocked (409 above)
+          // instead of silently minting twice.
+          onSubmitted: async (submittedHash) => {
+            await supabase
+              .from("certificates")
+              .update({ mint_tx_hash: submittedHash })
+              .eq("id", certificateId)
+          },
+        })
+        txHash = result.hash
+      } catch (err) {
+        if (isStellarTransactionError(err)) {
+          return transactionErrorResponse(err, {
+            action: "mint",
+            actor,
+            resourceType: "certificate",
+            resourceId: certificateId,
+          })
         }
-      )
+        throw err
+      }
 
       await supabase
         .from("certificates")
@@ -247,6 +213,19 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    if (reading.tx_hash) {
+      return NextResponse.json(
+        {
+          error:
+            `This reading already has a submitted mint transaction (${reading.tx_hash}) ` +
+            `that never confirmed. Reconcile it before minting again — retrying may mint duplicate tokens.`,
+          code: "UNRECONCILED_TRANSACTION",
+          tx_hash: reading.tx_hash,
+        },
+        { status: 409 }
+      )
+    }
+
     const prosumerAddress = reading.prosumers.stellar_address
     let kwhAmount: number
 
@@ -257,7 +236,37 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: message }, { status: 400 })
     }
 
-    const txHash = await mintOnChain(prosumerAddress, kwhAmount, minterSecret, contractAddress)
+    const minterKeypair = StellarSdk.Keypair.fromSecret(minterSecret)
+    let txHash: string
+    try {
+      const result = await getTransactionService().invokeContract({
+        signer: minterKeypair,
+        contractId: contractAddress,
+        method: "mint_energy",
+        args: mintArgs(prosumerAddress, kwhAmount, minterKeypair.publicKey()),
+        label: `mint:reading:${readingId}`,
+        onSubmitted: async (submittedHash) => {
+          await supabase.from("readings").update({ tx_hash: submittedHash }).eq("id", readingId!)
+        },
+      })
+      txHash = result.hash
+    } catch (err) {
+      if (isStellarTransactionError(err)) {
+        // Definitive, non-retryable failures that never reached the ledger close the reading.
+        // Submitted-but-unknown outcomes stay 'pending' with tx_hash set for reconciliation;
+        // retryable failures stay 'pending' so the admin can retry.
+        if (!err.submitted && !err.retryable) {
+          await supabase.from("readings").update({ status: "failed" }).eq("id", readingId!)
+        }
+        return transactionErrorResponse(err, {
+          action: "mint",
+          actor,
+          resourceType: "reading",
+          resourceId: readingId!,
+        })
+      }
+      throw err
+    }
 
     await supabase
       .from("readings")

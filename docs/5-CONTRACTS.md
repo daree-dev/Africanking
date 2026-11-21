@@ -192,6 +192,8 @@ Constructor params:
 
 ## 7. Seguridad (OpenZeppelin)
 
+> Roles operativos, multisig, rotación de claves, pausa de emergencia y procedimiento de upgrade: ver [`operations/contract-authority-runbook.md`](operations/contract-authority-runbook.md).
+
 Ambos contratos principales usan componentes auditados de OpenZeppelin Stellar v0.5.1:
 
 | Componente | Qué hace |

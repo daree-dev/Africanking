@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
 import * as StellarSdk from "@stellar/stellar-sdk"
 import { supabase } from "@/lib/supabase"
-import { CONTRACTS, STELLAR_CONFIG, NETWORK_PASSPHRASE } from "@/lib/contracts-config"
+import { CONTRACTS } from "@/lib/contracts-config"
+import { auditLog } from "@/lib/audit"
 import { requireAuth, isSession } from "@/lib/auth/middleware"
 import { validateBody } from "@/lib/validation/validate"
 import { retireSchema } from "@/lib/validation/schemas"
+import { getStellarConfigReport } from "@/server/stellar/network-config"
+import { getTransactionService, isStellarTransactionError } from "@/server/stellar/transaction-service"
+import { transactionErrorResponse } from "@/server/stellar/transaction-response"
 import { safeDbError, safeCatchError } from "@/lib/errors/safe-error"
 
 // POST: authenticated — buyer retires certificate
@@ -47,49 +51,58 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Server configuration error" }, { status: 500 })
     }
 
-    // Burn on-chain
+    const stellarConfig = getStellarConfigReport()
+    if (!stellarConfig.writesEnabled) {
+      return NextResponse.json(
+        {
+          error: "Stellar write operations are disabled: configuration is invalid or incomplete",
+          code: "WRITES_DISABLED",
+          config_fingerprint: stellarConfig.fingerprint,
+        },
+        { status: 503 }
+      )
+    }
+
+    // Burn on-chain through the shared transaction service
     const amountInStroops = BigInt(Math.round(cert.total_kwh * 1e7))
-    const server = new StellarSdk.rpc.Server(STELLAR_CONFIG.RPC_URL)
     const minterKeypair = StellarSdk.Keypair.fromSecret(minterSecret)
     const minterPublic = minterKeypair.publicKey()
-    const minterAccount = await server.getAccount(minterPublic)
-    const contract = new StellarSdk.Contract(contractAddress)
-    const maxTime = Math.floor(Date.now() / 1000) + 300
-    
-    const transaction = new StellarSdk.TransactionBuilder(minterAccount, {
-      fee: "100000",
-      networkPassphrase: NETWORK_PASSPHRASE,
-      timebounds: { minTime: 0, maxTime },
-    })
-      .addOperation(
-        contract.call(
-          "burn_energy",
+
+    let burnTxHash: string
+    try {
+      const result = await getTransactionService().invokeContract({
+        signer: minterKeypair,
+        contractId: contractAddress,
+        method: "burn_energy",
+        args: [
           StellarSdk.nativeToScVal(minterPublic, { type: "address" }),
-          StellarSdk.nativeToScVal(amountInStroops, { type: "i128" })
-        )
-      )
-      .build()
-
-    const preparedTx = await server.prepareTransaction(transaction)
-    preparedTx.sign(minterKeypair)
-
-    const sendResult = await server.sendTransaction(preparedTx)
-
-    if (sendResult.status === "ERROR") {
-      return NextResponse.json({ error: "Burn transaction failed" }, { status: 500 })
+          StellarSdk.nativeToScVal(amountInStroops, { type: "i128" }),
+        ],
+        label: `retire:certificate:${certificate_id}`,
+        // No certificate column holds an in-flight burn hash, so record it in the audit
+        // log as soon as it may be on-chain to support reconciliation.
+        onSubmitted: (hash) => {
+          auditLog({
+            action: "retire",
+            actor: session.sub,
+            resource_type: "certificate",
+            resource_id: certificate_id,
+            details: { outcome: "submitted", tx_hash: hash, buyer_address },
+          })
+        },
+      })
+      burnTxHash = result.hash
+    } catch (err) {
+      if (isStellarTransactionError(err)) {
+        return transactionErrorResponse(err, {
+          action: "retire",
+          actor: session.sub,
+          resourceType: "certificate",
+          resourceId: certificate_id,
+        })
+      }
+      throw err
     }
-
-    let txResponse = await server.getTransaction(sendResult.hash)
-    while (txResponse.status === "NOT_FOUND") {
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      txResponse = await server.getTransaction(sendResult.hash)
-    }
-
-    if (txResponse.status !== "SUCCESS") {
-      return NextResponse.json({ error: "Burn transaction failed" }, { status: 500 })
-    }
-
-    const burnTxHash = sendResult.hash
 
     const { data: retirement, error: retireError } = await supabase
       .from("retirements")
