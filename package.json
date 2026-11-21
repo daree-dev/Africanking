@@ -9,6 +9,7 @@
     "lint": "turbo lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "simulate": "npx tsx scripts/simulate-testnet.ts",
+    "reconcile:mints": "npx tsx scripts/reconcile-mints.ts",
     "meter:mock": "npx tsx scripts/smart-meter-mock.ts --continuous",
     "meter:mock:backfill": "npx tsx scripts/smart-meter-mock.ts --backfill"
   },

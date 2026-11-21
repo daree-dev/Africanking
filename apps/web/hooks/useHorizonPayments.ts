@@ -1,76 +1,42 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
-import { STELLAR_CONFIG } from "@/lib/contracts-config"
+import { useCallback, useMemo } from "react"
+import { APP_NETWORK, type StellarNetworkConfig } from "@/lib/stellar-network"
+import { fetchPaymentsPage } from "@/lib/activity/horizon"
+import type { ActivitySource, PaymentActivity } from "@/lib/activity/types"
+import { usePagedActivity, type PagedActivityState } from "./usePagedActivity"
 
-export interface HorizonPayment {
-  id: string
-  type: string
-  created_at: string
-  transaction_hash: string
-  asset_type: string
-  asset_code?: string
-  asset_issuer?: string
-  from?: string
-  to?: string
-  amount?: string
-  // For create_account operations (e.g. Friendbot funding)
-  funder?: string
-  account?: string
-  starting_balance?: string
-  // For path_payment, etc.
-  source_amount?: string
-  source_asset_code?: string
+export type { PaymentActivity } from "@/lib/activity/types"
+
+export interface UseHorizonPaymentsResult extends PagedActivityState<PaymentActivity> {
+  /** Alias of `records` kept for existing callers */
+  payments: PaymentActivity[]
+  source: ActivitySource
 }
 
-interface UseHorizonPaymentsResult {
-  payments: HorizonPayment[]
-  isLoading: boolean
-  error: string | null
-  refetch: () => void
-}
+/**
+ * Classic payment history from Horizon for `address`, on the app's single
+ * validated network. Soroban token activity is NOT included — use
+ * `useContractEvents` for that.
+ */
+export function useHorizonPayments(
+  address: string | null,
+  network: StellarNetworkConfig = APP_NETWORK,
+  pageSize = 50
+): UseHorizonPaymentsResult {
+  const key = address ? `${network.network}|${network.horizonUrl}|${address}` : null
 
-export function useHorizonPayments(address: string | null): UseHorizonPaymentsResult {
-  const [payments, setPayments] = useState<HorizonPayment[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const fetchPage = useCallback(
+    (cursor: string | null) =>
+      fetchPaymentsPage({ horizonUrl: network.horizonUrl, address: address!, cursor, limit: pageSize }),
+    [network.horizonUrl, address, pageSize]
+  )
 
-  const fetchPayments = useCallback(async () => {
-    if (!address) {
-      setPayments([])
-      return
-    }
+  const state = usePagedActivity(key, fetchPage)
+  const source = useMemo<ActivitySource>(
+    () => ({ kind: "horizon", network: network.network, endpoint: new URL(network.horizonUrl).host }),
+    [network.network, network.horizonUrl]
+  )
 
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      const url = `${STELLAR_CONFIG.HORIZON_URL}/accounts/${address}/payments?order=desc&limit=50`
-      const response = await fetch(url)
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          // Account not yet funded on testnet — treat as empty
-          setPayments([])
-          return
-        }
-        throw new Error(`Horizon API error: ${response.status}`)
-      }
-
-      const data = await response.json()
-      const records: HorizonPayment[] = data._embedded?.records ?? []
-      setPayments(records)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch payments")
-      setPayments([])
-    } finally {
-      setIsLoading(false)
-    }
-  }, [address])
-
-  useEffect(() => {
-    fetchPayments()
-  }, [fetchPayments])
-
-  return { payments, isLoading, error, refetch: fetchPayments }
+  return { ...state, payments: state.records, source }
 }

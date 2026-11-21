@@ -13,6 +13,7 @@ import { useAuth } from "@/lib/auth-context"
 import { RegisterCooperativeModal } from "@/components/modals/register-cooperative-modal"
 import { useAccountSetup } from "@/hooks/useAccountSetup"
 import { useHorizonPayments } from "@/hooks/useHorizonPayments"
+import { describeSource } from "@/lib/activity/display"
 import { useEnergyDistribution } from "@/hooks/useEnergyDistribution"
 import { useCertificateStats } from "@/hooks/useCertificateStats"
 import { useMyMeters } from "@/hooks/useMyMeters"
@@ -46,7 +47,14 @@ export default function DashboardPage() {
   const [showRegisterCoop, setShowRegisterCoop] = useState(false)
   const { accountExists, isLoading: accountLoading, isFunding, error: fundError, isTestnet, fundAccount } = useAccountSetup()
 
-  const { payments, isLoading: paymentsLoading, error: paymentsError, refetch: refetchPayments } = useHorizonPayments(address)
+  const {
+    payments,
+    isLoading: paymentsLoading,
+    error: paymentsError,
+    status: paymentsStatus,
+    refetch: refetchPayments,
+    source: paymentsSource,
+  } = useHorizonPayments(address)
   const { getTotalGenerated, getMemberList, getMemberInfo } = useEnergyDistribution()
   const { stats: certStats, loading: certLoading, error: certError } = useCertificateStats()
   const { meters, loading: metersLoading } = useMyMeters()
@@ -601,7 +609,7 @@ export default function DashboardPage() {
                     <RefreshCw className={`size-3 ${paymentsLoading ? "animate-spin" : ""}`} />
                   </Button>
                 </div>
-                <CardDescription>Stellar Horizon</CardDescription>
+                <CardDescription>{describeSource(paymentsSource)}</CardDescription>
               </CardHeader>
               <CardContent>
                 {paymentsLoading && payments.length === 0 && (
@@ -615,19 +623,22 @@ export default function DashboardPage() {
                     <p className="text-sm text-destructive">{paymentsError}</p>
                   </div>
                 )}
-                {!paymentsLoading && !paymentsError && recentPayments.length === 0 && (
+                {paymentsStatus === "account_not_found" && (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    {t("activity.accountNotFound")}
+                  </div>
+                )}
+                {paymentsStatus === "ready" && recentPayments.length === 0 && (
                   <div className="text-center py-8 text-muted-foreground text-sm">
                     {t("dashboard.noTransactions")}
                   </div>
                 )}
                 {recentPayments.length > 0 && (
                   <div className="space-y-3">
-                    {recentPayments.filter((p) => p.amount || p.source_amount || p.starting_balance).map((payment) => {
-                      const isIncoming = payment.type === "create_account"
-                        ? payment.account === address
-                        : payment.to === address
-                      const amount = payment.amount || payment.source_amount || payment.starting_balance || "0"
-                      const asset = payment.asset_code || (payment.asset_type === "native" || payment.type === "create_account" ? "XLM" : payment.source_asset_code || "XLM")
+                    {recentPayments.filter((p) => p.amount).map((payment) => {
+                      const isIncoming = payment.to === address && payment.from !== address
+                      const amount = payment.amount || "0"
+                      const asset = payment.asset
 
                       return (
                         <div key={payment.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted transition-colors">
@@ -638,7 +649,7 @@ export default function DashboardPage() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium">{isIncoming ? t("dashboard.received") : t("dashboard.sent")}</p>
-                            <p className="text-xs text-muted-foreground">{formatRelativeTime(payment.created_at, t)}</p>
+                            <p className="text-xs text-muted-foreground">{formatRelativeTime(payment.createdAt, t)}</p>
                           </div>
                           <div className="text-right">
                             <p className={`text-sm font-bold ${isIncoming ? "text-energy-green" : "text-foreground"}`}>

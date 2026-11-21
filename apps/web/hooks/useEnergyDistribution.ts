@@ -4,9 +4,12 @@ import { useState } from "react"
 import { useWallet } from "@/lib/wallet-context"
 import { CONTRACTS, STELLAR_CONFIG, NETWORK_PASSPHRASE } from "@/lib/contracts-config"
 import * as StellarSdk from "@stellar/stellar-sdk"
+import { useContractWrite } from "@/hooks/useContractWrite"
+import type { CooperativeRef } from "@/lib/wallet/contract-write"
 
 export function useEnergyDistribution() {
-  const { address, kit } = useWallet()
+  const { address } = useWallet()
+  const write = useContractWrite()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -160,64 +163,23 @@ export function useEnergyDistribution() {
   }
 
   /**
-   * Record energy generation (Admin only)
+   * Record energy generation (Admin only). Guarded write: network check,
+   * intent review, post-signature revalidation.
    */
-  const recordGeneration = async (kwhGenerated: number): Promise<string> => {
+  const recordGeneration = async (kwhGenerated: number, cooperative: CooperativeRef): Promise<string> => {
     try {
       setIsLoading(true)
       setError(null)
 
-      if (!address || !kit) {
-        throw new Error("No wallet connected")
-      }
-
-      if (!CONTRACTS.ENERGY_DISTRIBUTION) {
-        throw new Error("Energy distribution contract not configured")
-      }
-
-      // Convert kWh to contract format (7 decimals)
-      const kwhInStroops = Math.floor(kwhGenerated * 10000000)
-
-      const server = new StellarSdk.rpc.Server(STELLAR_CONFIG.RPC_URL)
-      const contract = new StellarSdk.Contract(CONTRACTS.ENERGY_DISTRIBUTION)
-      const account = await server.getAccount(address)
-
-      const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: "100000",
-        networkPassphrase: NETWORK_PASSPHRASE,
+      const { hash } = await write({
+        operation: "record_generation",
+        cooperative,
+        amountKwh: kwhGenerated,
+        contractId: CONTRACTS.ENERGY_DISTRIBUTION,
+        method: "record_generation",
+        args: [StellarSdk.nativeToScVal(BigInt(Math.round(kwhGenerated * 1e7)), { type: "i128" })],
       })
-        .addOperation(
-          contract.call(
-            "record_generation",
-            StellarSdk.nativeToScVal(kwhInStroops, { type: "i128" })
-          )
-        )
-        .setTimeout(30)
-        .build()
-
-      const preparedTx = await server.prepareTransaction(transaction)
-      const { signedTxXdr } = await kit.signTransaction(preparedTx.toXDR())
-      const signedTransaction = StellarSdk.TransactionBuilder.fromXDR(
-        signedTxXdr,
-        NETWORK_PASSPHRASE
-      )
-
-      const result = await server.sendTransaction(signedTransaction as StellarSdk.Transaction)
-
-      if (result.status === "PENDING") {
-        let getResponse = await server.getTransaction(result.hash)
-
-        while (getResponse.status === "NOT_FOUND") {
-          await new Promise(resolve => setTimeout(resolve, 1000))
-          getResponse = await server.getTransaction(result.hash)
-        }
-
-        if (getResponse.status === "SUCCESS") {
-          return result.hash
-        }
-      }
-
-      throw new Error("Transaction failed")
+      return hash
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Unknown error"
       setError(errorMessage)
