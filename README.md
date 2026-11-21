@@ -203,50 +203,42 @@ cargo test
 
 ---
 
-## Roadmap
+## Service-Level Objectives & Degradation Policy
 
-| Level | What | Status |
-|-------|------|--------|
-| 1 — Internal registry | Token = verifiable production record | ✅ Live on Testnet |
-| 2 — Verified certification | IoT oracles + independent meter validation | 🔄 Next |
-| 3 — Recognized standard | Integration with I-REC, Energy Web, TIGR | 🔮 Future |
+Operational targets for the cooperative-management platform. Generation credits are assigned to cooperative members; this is **not** an external certificate marketplace and makes **no** I-REC/ESG certification claim. Stellar is the immutable evidence layer; the relational store is the operational system of record.
 
----
+### SLOs
 
-## Planned Stellar Ecosystem Integrations
+| Area | SLO | Target | Window | Measurement |
+|------|-----|--------|--------|-------------|
+| API availability | Successful (non-5xx) responses on `/api/*` | ≥ 99.5% | 30 days rolling | `http_requests_total` by status class |
+| Reading ingestion latency | `POST /api/meters/readings` p95 | ≤ 800 ms | 30 days rolling | `http_request_duration_seconds` histogram |
+| Chain status freshness | Age of last successful Stellar RPC status check | ≤ 60 s | 30 days rolling | `chain_status_age_seconds` gauge |
+| Data durability | Successful Supabase writes / attempted writes | ≥ 99.9% | 30 days rolling | `db_write_errors_total` vs `db_writes_total` |
 
-Africanking is designed to plug into Stellar's growing DeFi and payments ecosystem. Planned integrations from the [SCF Integration Track](https://stellar.gitbook.io/scf-handbook/scf-awards/build-award/integration-track/integration-list):
+Error budget = 100% − SLO target over the window (e.g. API availability budget ≈ 3.6 h/month).
 
-| Integration | What it unlocks for Africanking |
-|-------------|------------------------------|
-| **[DeFindex](https://defindex.io)** | Cooperatives earn yield on certificate proceeds held in vaults — idle capital works while certificates wait for buyers |
-| **[Blend Protocol](https://blend.capital)** | Use certificates as collateral for credit lines — cooperatives access working capital without selling |
-| **USDC (Circle)** | Stablecoin payments for certificate purchases — buyers pay in USDC, cooperatives receive USDC, no FX volatility |
-| **[Aquarius](https://aquarius.network)** | Liquidity incentives for BETOKEN/USDC pairs — bootstraps the certificate secondary market |
-| **Fiat On/Off Ramp (SEP-24)** | Cooperatives receive payments in local fiat (ARS, COP, BRL) via Stellar anchors — no crypto knowledge required |
-| **[Stellar Turrets / smart oracles](https://tss.stellar.org)** | Automated certificate minting triggered by verified IoT meter readings — removes manual intervention |
+### Degradation policy (user-visible behavior)
 
-These integrations are load-bearing features on the product roadmap, not checkbox items. DeFindex is the most immediate — partial integration already exists in the codebase.
+| Dependency / SLO at risk | User-visible behavior |
+|--------------------------|-----------------------|
+| API availability budget < 25% | Banner: "Degraded performance — some actions may be slow." Read paths stay up; non-critical writes queued. |
+| Ingestion latency p95 > 800 ms | Readings still accepted; UI shows "Processing" state and retries idempotently. |
+| Chain status stale > 60 s | Chain-backed actions (mint/retire) disabled with "Chain temporarily unavailable — retry shortly"; cached balances shown read-only. |
+| Data durability budget < 25% | Writes fail closed with explicit error; no silent data loss; operators paged. |
 
----
+### Error-budget review & capacity
 
-## Contributing
-
-PRs welcome. Branch to `develop`, keep commits focused.
-
-```bash
-git checkout develop
-git checkout -b feat/your-feature
-pnpm install && pnpm dev
-# Open PR to develop
-```
+- Weekly review of error-budget burn against the 30-day windows above.
+- When burn rate exceeds 2× the sustainable rate, freeze non-critical rollouts and update capacity assumptions (instance count, DB pool size, RPC rate limits) in the operations runbook.
+- Dashboards and alert rules live in `docs/operations/observability-runbook.md`; alerting is validated against a controlled SLO breach before each release.
 
 ---
 
-## License
+## Backup, Restore & Disaster Recovery
 
-Apache-2.0 — See [LICENSE](LICENSE)
+Operational runbook for the cooperative-management platform. Generation credits are assigned to cooperative members; this is **not** an external certificate marketplace and makes **no** I-REC/ESG certification claim. Stellar is the immutable evidence layer; the relational store is the operational system of record.
 
----
+### RPO / RTO targets
 
-**Built on Stellar · BuenDia Builders 2026**
+| Data class |
