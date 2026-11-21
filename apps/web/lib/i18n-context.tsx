@@ -1,6 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
+import { featureTranslations } from "@/lib/i18n"
 
 type Language = "es" | "en"
 
@@ -12,7 +13,7 @@ interface I18nContextType {
 
 const I18nContext = createContext<I18nContextType | undefined>(undefined)
 
-const translations = {
+const baseTranslations = {
   es: {
     // Landing Page
     "landing.title": "Energía Verde Tokenizada",
@@ -797,6 +798,11 @@ const translations = {
   },
 }
 
+const translations: Record<Language, Record<string, string>> = {
+  es: { ...baseTranslations.es, ...featureTranslations.es },
+  en: { ...baseTranslations.en, ...featureTranslations.en },
+}
+
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [language, setLanguageState] = useState<Language>("es")
 
@@ -813,7 +819,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }
 
   const t = (key: string): string => {
-    return translations[language][key as keyof (typeof translations)["es"]] || key
+    return translations[language][key] || key
   }
 
   return <I18nContext.Provider value={{ language, setLanguage, t }}>{children}</I18nContext.Provider>

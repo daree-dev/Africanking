@@ -148,7 +148,15 @@ export const updateReadingSchema = z.object({
   status: z.enum(["pending", "verified", "rejected"]),
 })
 
-// Retire
+// Generation credits — internal allocation to cooperative members.
+// Deliberately no buyer / ESG-purpose fields: credits are not sold.
+export const allocateCreditSchema = z.object({
+  certificate_id: uuid,
+  basis: z.enum(["installed_capacity", "equal"]).default("installed_capacity"),
+}).strict()
+
+// Retire — LEGACY. Kept only so old clients get a clear 410 from
+// /api/certificates/retire; no UI submits this anymore.
 export const retireSchema = z.object({
   certificate_id: uuid,
   buyer_address: stellarAddress,

@@ -6,116 +6,102 @@ import { requireAuth, isSession } from "@/lib/auth/middleware"
 import { validateBody } from "@/lib/validation/validate"
 import { mintSchema } from "@/lib/validation/schemas"
 import { safeCatchError } from "@/lib/errors/safe-error"
+import { finalizeCertificateMint, finalizeReadingMint, getMintableKwh } from "@/lib/mint/finalize"
+import {
+  ChainUnavailableError,
+  isTransientChainError,
+  submitSignedTransaction,
+  withBackoff,
+  type ChainWriteOutcome,
+  type RpcWriteClient,
+} from "@/lib/stellar/resilience"
 
-async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
-  try {
-    return await fn()
-  } catch (err) {
-    console.warn(`[MINT] ${label} failed, retrying in 2s...`, err instanceof Error ? err.message : err)
-    await new Promise((r) => setTimeout(r, 2000))
-    return fn()
-  }
+const DEFAULT_CONFIRM_TIMEOUT_MS = 90_000
+
+function confirmTimeoutMs() {
+  const raw = Number(process.env.MINT_CONFIRM_TIMEOUT_MS)
+  return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_CONFIRM_TIMEOUT_MS
 }
 
-async function markFailed(readingId: string, reason: string) {
-  await supabase
-    .from("readings")
-    .update({ status: "failed" })
-    .eq("id", readingId)
-  return NextResponse.json({ error: reason }, { status: 500 })
-}
-
-function getMintableKwh(reading: {
-  kwh_injected?: number | null
-  kwh_generated?: number | null
-  kwh_self_consumed?: number | null
-}) {
-  if (reading.kwh_injected != null) {
-    return reading.kwh_injected
-  }
-
-  if (reading.kwh_generated == null) {
-    throw new Error("Reading is missing both kwh_injected and kwh_generated")
-  }
-
-  if (reading.kwh_self_consumed == null) {
-    throw new Error("Reading requires kwh_self_consumed when kwh_injected is unavailable")
-  }
-
-  return Math.max(0, reading.kwh_generated - reading.kwh_self_consumed)
-}
-
+/**
+ * Build, sign once and submit a mint.
+ *
+ * Preparation (getAccount / prepareTransaction) is a read-only simulation and
+ * is retried with bounded backoff; if the RPC stays down we throw
+ * ChainUnavailableError before anything is signed. The signed envelope is
+ * only ever re-sent as-is (see submitSignedTransaction), so a retry cannot
+ * mint twice.
+ */
 async function mintOnChain(
   toAddress: string,
   amountKwh: number,
   minterSecret: string,
   contractAddress: string,
-  onSubmitted?: (hash: string) => Promise<void>
-) {
+  onSubmitted: (hash: string) => Promise<void>,
+): Promise<ChainWriteOutcome> {
   const amountInStroops = BigInt(Math.round(amountKwh * 1e7))
   const server = new StellarSdk.rpc.Server(STELLAR_CONFIG.RPC_URL)
   const minterKeypair = StellarSdk.Keypair.fromSecret(minterSecret)
   const minterPublic = minterKeypair.publicKey()
-  const minterAccount = await withRetry(() => server.getAccount(minterPublic), "getAccount")
   const contract = new StellarSdk.Contract(contractAddress)
-  const maxTime = Math.floor(Date.now() / 1000) + 300
 
-  const transaction = new StellarSdk.TransactionBuilder(minterAccount, {
-    fee: "100000",
-    networkPassphrase: NETWORK_PASSPHRASE,
-    timebounds: { minTime: 0, maxTime },
-  })
-    .addOperation(
-      contract.call(
-        "mint_energy",
-        StellarSdk.nativeToScVal(toAddress, { type: "address" }),
-        StellarSdk.nativeToScVal(amountInStroops, { type: "i128" }),
-        StellarSdk.nativeToScVal(minterPublic, { type: "address" })
-      )
-    )
-    .build()
+  let preparedTx: StellarSdk.Transaction
+  try {
+    preparedTx = await withBackoff(async () => {
+      const minterAccount = await server.getAccount(minterPublic)
+      const maxTime = Math.floor(Date.now() / 1000) + 300
+      const transaction = new StellarSdk.TransactionBuilder(minterAccount, {
+        fee: "100000",
+        networkPassphrase: NETWORK_PASSPHRASE,
+        timebounds: { minTime: 0, maxTime },
+      })
+        .addOperation(
+          contract.call(
+            "mint_energy",
+            StellarSdk.nativeToScVal(toAddress, { type: "address" }),
+            StellarSdk.nativeToScVal(amountInStroops, { type: "i128" }),
+            StellarSdk.nativeToScVal(minterPublic, { type: "address" })
+          )
+        )
+        .build()
+      return server.prepareTransaction(transaction)
+    })
+  } catch (err) {
+    if (isTransientChainError(err)) throw new ChainUnavailableError(undefined, err)
+    throw err
+  }
 
-  const preparedTx = await withRetry(() => server.prepareTransaction(transaction), "prepareTransaction")
   preparedTx.sign(minterKeypair)
 
-  const sendResult = await withRetry(() => server.sendTransaction(preparedTx), "sendTransaction")
+  return submitSignedTransaction(server as unknown as RpcWriteClient, preparedTx, {
+    onSubmitted,
+    confirmTimeoutMs: confirmTimeoutMs(),
+  })
+}
 
-  if (sendResult.status === "ERROR") {
-    throw new Error("Transaction failed to submit")
-  }
+function pendingResponse(txHash: string, extra: Record<string, unknown>) {
+  return NextResponse.json(
+    {
+      status: "pending_confirmation",
+      tx_hash: txHash,
+      message:
+        "Transaction submitted but not yet confirmed. It will not be resubmitted; " +
+        "use /api/mint/reconcile to check its status.",
+      ...extra,
+    },
+    { status: 202 }
+  )
+}
 
-  // Record the submitted hash before waiting for confirmation — if the poll below
-  // times out on a slow testnet, the caller can still tell this hash was sent
-  // instead of silently allowing a duplicate mint on retry.
-  if (onSubmitted) {
-    await onSubmitted(sendResult.hash)
-  }
-
-  const MAX_POLL_ATTEMPTS = 90
-  let attempts = 0
-  let txResponse = await server.getTransaction(sendResult.hash)
-  while (txResponse.status === "NOT_FOUND") {
-    if (++attempts >= MAX_POLL_ATTEMPTS) {
-      throw new Error(
-        `Transaction confirmation timeout — tx ${sendResult.hash} was submitted but not yet confirmed. ` +
-          `Check https://stellar.expert/explorer/testnet/tx/${sendResult.hash} before retrying.`
-      )
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-    txResponse = await server.getTransaction(sendResult.hash)
-  }
-
-  if (txResponse.status !== "SUCCESS") {
-    throw new Error(`Transaction failed with status: ${txResponse.status}`)
-  }
-
-  return sendResult.hash
+function unavailableResponse() {
+  return NextResponse.json(
+    { error: "Stellar network unavailable — no transaction was submitted. Safe to retry later.", submitted: false },
+    { status: 503 }
+  )
 }
 
 // POST: admin — mints tokens for certificate (or legacy reading)
 export async function POST(req: NextRequest) {
-  let readingId: string | undefined
-
   try {
     const session = await requireAuth()
     if (!isSession(session)) return session
@@ -124,7 +110,7 @@ export async function POST(req: NextRequest) {
     const v = validateBody(mintSchema, body)
     if (!v.success) return v.response
 
-    readingId = v.data.reading_id
+    const readingId = v.data.reading_id
     const certificateId = v.data.certificate_id
 
     const minterSecret = process.env.MINTER_SECRET_KEY
@@ -168,8 +154,9 @@ export async function POST(req: NextRequest) {
           {
             error:
               `This certificate already has a submitted mint transaction (${cert.mint_tx_hash}) ` +
-              `that never confirmed as available. Check it on Stellar Expert before minting again — ` +
-              `retrying may mint duplicate tokens.`,
+              `that has not been confirmed. Use /api/mint/reconcile to check it — ` +
+              `minting again may create duplicate tokens.`,
+            tx_hash: cert.mint_tx_hash,
           },
           { status: 409 }
         )
@@ -183,46 +170,39 @@ export async function POST(req: NextRequest) {
       const mintTo = StellarSdk.Keypair.fromSecret(minterSecret).publicKey()
       const tokenContract = coop.token_contract_address || contractAddress
 
-      const txHash = await mintOnChain(
-        mintTo,
-        cert.total_kwh,
-        minterSecret,
-        tokenContract,
-        async (submittedHash) => {
-          await supabase
-            .from("certificates")
-            .update({ mint_tx_hash: submittedHash })
-            .eq("id", certificateId)
-        }
-      )
-
-      await supabase
-        .from("certificates")
-        .update({
-          status: "available",
-          mint_tx_hash: txHash,
-          token_amount: cert.total_kwh,
+      let outcome: ChainWriteOutcome
+      try {
+        outcome = await mintOnChain(mintTo, cert.total_kwh, minterSecret, tokenContract, async (submittedHash) => {
+          // Persist before waiting so a timeout can never lead to a blind re-mint.
+          await supabase.from("certificates").update({ mint_tx_hash: submittedHash }).eq("id", certificateId)
         })
-        .eq("id", certificateId)
+      } catch (err) {
+        if (err instanceof ChainUnavailableError) return unavailableResponse()
+        throw err
+      }
 
-      await supabase.from("mint_log").insert({
-        certificate_id: certificateId,
-        prosumer_address: mintTo,
-        amount_hdrop: cert.total_kwh,
-        tx_hash: txHash,
-      })
+      if (outcome.status === "pending") {
+        return pendingResponse(outcome.hash, { certificate_id: certificateId })
+      }
 
-      await supabase.from("events").insert({
-        type: "mint",
-        amount: cert.total_kwh,
-        tx_hash: txHash,
-        cooperative_id: cert.cooperative_id,
-        stellar_address: mintTo,
+      if (outcome.status === "failed") {
+        // Definitive on-chain rejection: nothing was minted, so the guard hash
+        // can be cleared and the admin may try again.
+        await supabase.from("certificates").update({ mint_tx_hash: null }).eq("id", certificateId)
+        return NextResponse.json({ error: outcome.reason, tx_hash: outcome.hash }, { status: 502 })
+      }
+
+      await finalizeCertificateMint({
+        certificateId,
+        cooperativeId: cert.cooperative_id,
+        totalKwh: cert.total_kwh,
+        mintTo,
+        txHash: outcome.hash,
       })
 
       return NextResponse.json({
         success: true,
-        tx_hash: txHash,
+        tx_hash: outcome.hash,
         certificate_id: certificateId,
         amount_kwh: cert.total_kwh,
         mint_to: mintTo,
@@ -247,6 +227,18 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    if (reading.tx_hash) {
+      return NextResponse.json(
+        {
+          error:
+            `This reading already has a submitted mint transaction (${reading.tx_hash}) that has not been confirmed. ` +
+            `Use /api/mint/reconcile before minting again.`,
+          tx_hash: reading.tx_hash,
+        },
+        { status: 409 }
+      )
+    }
+
     const prosumerAddress = reading.prosumers.stellar_address
     let kwhAmount: number
 
@@ -257,41 +249,43 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: message }, { status: 400 })
     }
 
-    const txHash = await mintOnChain(prosumerAddress, kwhAmount, minterSecret, contractAddress)
+    let outcome: ChainWriteOutcome
+    try {
+      outcome = await mintOnChain(prosumerAddress, kwhAmount, minterSecret, contractAddress, async (submittedHash) => {
+        await supabase.from("readings").update({ tx_hash: submittedHash }).eq("id", readingId!)
+      })
+    } catch (err) {
+      // Not submitted → the reading keeps its status; it did not "fail".
+      if (err instanceof ChainUnavailableError) return unavailableResponse()
+      throw err
+    }
 
-    await supabase
-      .from("readings")
-      .update({ status: "minted", tx_hash: txHash })
-      .eq("id", readingId!)
+    if (outcome.status === "pending") {
+      return pendingResponse(outcome.hash, { reading_id: readingId })
+    }
 
-    await supabase.from("mint_log").insert({
-      reading_id: readingId,
-      prosumer_address: prosumerAddress,
-      amount_hdrop: kwhAmount,
-      tx_hash: txHash,
-    })
+    if (outcome.status === "failed") {
+      await supabase.from("readings").update({ status: "failed" }).eq("id", readingId!)
+      return NextResponse.json({ error: outcome.reason, tx_hash: outcome.hash }, { status: 502 })
+    }
 
-    await supabase.from("events").insert({
-      type: "mint",
-      amount: kwhAmount,
-      tx_hash: txHash,
-      cooperative_id: reading.cooperative_id,
-      stellar_address: prosumerAddress,
+    await finalizeReadingMint({
+      readingId: readingId!,
+      cooperativeId: reading.cooperative_id,
+      prosumerAddress,
+      kwhAmount,
+      txHash: outcome.hash,
     })
 
     return NextResponse.json({
       success: true,
-      tx_hash: txHash,
+      tx_hash: outcome.hash,
       amount_hdrop: kwhAmount,
       prosumer_address: prosumerAddress,
     })
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error"
-    console.error("[MINT ERROR]", message, error instanceof Error ? error.stack : error)
-    if (readingId) {
-      return markFailed(readingId, message)
-    }
-    // Expose error details for debugging
-    return NextResponse.json({ error: message }, { status: 500 })
+    // Unexpected errors carry no on-chain evidence: never mark records failed here.
+    console.error("[MINT ERROR]", error instanceof Error ? error.message : error)
+    return safeCatchError(error)
   }
 }

@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { LockKeyhole, ShieldAlert, Zap } from "lucide-react"
+import { ChainUnavailableError, ChainWritePendingError } from "@/lib/stellar/resilience"
 
 export function MintTokenPanel() {
   const { address } = useWallet()
@@ -69,6 +70,24 @@ export function MintTokenPanel() {
       setRecipient("")
       setAmount("")
     } catch (err) {
+      if (err instanceof ChainWritePendingError) {
+        // Submitted without a verdict: neither success nor failure is known yet.
+        toast({
+          title: "Mint submitted — awaiting confirmation",
+          description: `Tx ${err.hash.slice(0, 10)}… was sent. Do not resubmit; the dashboard will update once the network confirms it.`,
+        })
+        setRecipient("")
+        setAmount("")
+        return
+      }
+      if (err instanceof ChainUnavailableError) {
+        toast({
+          title: "Stellar network unavailable",
+          description: "No transaction was submitted. You can safely retry later.",
+          variant: "destructive",
+        })
+        return
+      }
       toast({
         title: "Minting failed",
         description: err instanceof Error ? err.message : "Unknown error occurred.",

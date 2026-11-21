@@ -71,6 +71,22 @@ export interface Certificate {
   created_at: string
 }
 
+/** Per-member share of a generation credit (see docs/migrations/20261121_credit_allocations.sql). */
+export interface CreditAllocation {
+  id: string
+  certificate_id: string
+  cooperative_id: string
+  member_stellar_address: string
+  prosumer_id: string | null
+  basis: "installed_capacity" | "equal"
+  share_version: string
+  share_percent: number
+  kwh_allocated: number
+  allocated_by: string
+  allocated_at: string
+}
+
+/** LEGACY buyer retirement from the pre-pivot marketplace model. Read-only. */
 export interface Retirement {
   id: string
   certificate_id: string

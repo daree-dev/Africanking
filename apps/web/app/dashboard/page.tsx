@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useWallet } from "@/lib/wallet-context"
 import { useI18n } from "@/lib/i18n-context"
@@ -20,6 +20,9 @@ import { useMyReadings } from "@/hooks/useMyReadings"
 import { Spinner } from "@/components/ui/spinner"
 import { Button } from "@/components/ui/button"
 import { useEnergyToken } from "@/hooks/useEnergyToken"
+import { useChainRead } from "@/hooks/useChainRead"
+import { ChainFreshnessIndicator } from "@/components/shared/chain-freshness"
+import { PendingChainWritesNotice } from "@/components/shared/pending-chain-writes"
 
 
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
@@ -46,79 +49,35 @@ export default function DashboardPage() {
   const [showRegisterCoop, setShowRegisterCoop] = useState(false)
   const { accountExists, isLoading: accountLoading, isFunding, error: fundError, isTestnet, fundAccount } = useAccountSetup()
 
-  const { payments, isLoading: paymentsLoading, error: paymentsError, refetch: refetchPayments } = useHorizonPayments(address)
+  const { payments, isLoading: paymentsLoading, error: paymentsError, refetch: refetchPayments, freshness: paymentsFreshness, fetchedAt: paymentsFetchedAt, retry: paymentsRetry } = useHorizonPayments(address)
   const { getTotalGenerated, getMemberList, getMemberInfo } = useEnergyDistribution()
   const { stats: certStats, loading: certLoading, error: certError } = useCertificateStats()
   const { meters, loading: metersLoading } = useMyMeters()
   const { readings, loading: readingsLoading } = useMyReadings(address)
 
-  const [communityStats, setCommunityStats] = useState<{
-    totalKwh: number
-    memberCount: number
-    userPercent: number | null
-  } | null>(null)
-  const [communityFetchError, setCommunityFetchError] = useState<string | null>(null)
-  const [communityLoadingLocal, setCommunityLoadingLocal] = useState(false)
-
   const { getBalance } = useEnergyToken()
-  const [hdropBalance, setHdropBalance] = useState<string | null>(null)
-
   const [onboardingCollapsed, setOnboardingCollapsed] = useState(false)
 
-  useEffect(() => {
-    if (address) {
-      getBalance(address).then(setHdropBalance).catch(() => setHdropBalance("0.00"))
-    }
+  // Chain-derived reads: cached values are shown (marked stale) during an
+  // RPC outage, and an unknown balance is never rendered as "0.00".
+  const fetchBalance = useCallback(() => getBalance(address!), [getBalance, address])
+  const balanceRead = useChainRead(address ? `token.balance:${address}` : null, fetchBalance, "token.balance")
+  const hdropBalance = balanceRead.value
+
+  const fetchCommunity = useCallback(async () => {
+    const [totalKwh, members] = await Promise.all([getTotalGenerated(), getMemberList()])
+    const info = await getMemberInfo(address!)
+    return { totalKwh, memberCount: members.length, userPercent: info.isMember ? info.percent : null }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- hook fns are recreated each render
   }, [address])
-  // Fetch community stats — catch errors gracefully, with timeout
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- hook fns are stable by identity
-  useEffect(() => {
-    if (!isConnected || !address) return
-
-    let cancelled = false
-
-    const fetchCommunityStats = async () => {
-      try {
-        setCommunityFetchError(null)
-        setCommunityLoadingLocal(true)
-
-        const timeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("timeout")), 8000)
-        )
-
-        const [totalKwh, members] = await Promise.race([
-          Promise.all([getTotalGenerated(), getMemberList()]),
-          timeout,
-        ]) as [number, string[]]
-
-        if (cancelled) return
-
-        let userPercent: number | null = null
-        try {
-          const info = await getMemberInfo(address)
-          if (info.isMember) {
-            userPercent = info.percent
-          }
-        } catch {
-          // not a member
-        }
-        setCommunityStats({
-          totalKwh,
-          memberCount: members.length,
-          userPercent,
-        })
-      } catch (err) {
-        if (cancelled) return
-        console.error("Error fetching community stats:", err)
-        setCommunityFetchError("communityError")
-      } finally {
-        if (!cancelled) setCommunityLoadingLocal(false)
-      }
-    }
-
-    fetchCommunityStats()
-    return () => { cancelled = true }
-  }, [isConnected, address])
+  const communityRead = useChainRead(
+    isConnected && address ? `distribution.community:${address}` : null,
+    fetchCommunity,
+    "distribution.total_generated",
+  )
+  const communityStats = communityRead.value
+  const communityLoadingLocal = communityRead.status === "loading"
+  const communityFetchError = communityRead.status === "unavailable" ? "communityError" : null
 
   const [copied, setCopied] = useState(false)
   const [avatarError, setAvatarError] = useState(false)
@@ -170,6 +129,8 @@ export default function DashboardPage() {
         <DashboardHeader />
 
         <div className="p-4 md:p-6">
+          <PendingChainWritesNotice />
+
           {/* 1. Welcome Card */}
           {userProfile && (
             <Card id="user-info-section" className="mb-6 scroll-mt-4">
@@ -533,6 +494,12 @@ export default function DashboardPage() {
                   <InfoTooltip text={t("dashboard.communityTooltip")} />
                 </div>
                 <CardDescription>{t("dashboard.communityOnchain")}</CardDescription>
+                <ChainFreshnessIndicator
+                  status={communityRead.status}
+                  fetchedAt={communityRead.fetchedAt}
+                  retry={communityRead.retry}
+                  onRetry={communityRead.refetch}
+                />
               </CardHeader>
               <CardContent>
                 {communityLoadingLocal && !communityStats && !communityFetchError && (
@@ -602,6 +569,14 @@ export default function DashboardPage() {
                   </Button>
                 </div>
                 <CardDescription>Stellar Horizon</CardDescription>
+                {address && (
+                  <ChainFreshnessIndicator
+                    status={paymentsFreshness}
+                    fetchedAt={paymentsFetchedAt}
+                    retry={paymentsRetry}
+                    onRetry={refetchPayments}
+                  />
+                )}
               </CardHeader>
               <CardContent>
                 {paymentsLoading && payments.length === 0 && (
