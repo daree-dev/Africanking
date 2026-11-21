@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "vitest run"
   },
   "dependencies": {
     "@be-energy/stellar": "workspace:*",
@@ -75,11 +76,16 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.13",
     "@types/node": "^22.19.11",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.183.1",
+    "axe-core": "^4.14.1",
     "fast-check": "^4.6.0",
+    "jsdom": "^31.0.1",
     "postcss": "^8.5",
     "tailwindcss": "^4.1.9",
     "typescript": "^5",
