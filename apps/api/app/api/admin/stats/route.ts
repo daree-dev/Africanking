@@ -1,29 +1,54 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { supabase } from "@/lib/supabase"
-import { requireSuperAdmin, isSession } from "@/lib/auth/middleware"
+import { requireAuth, isSession } from "@/lib/auth/middleware"
 import { safeCatchError } from "@/lib/errors/safe-error"
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const session = await requireSuperAdmin()
+    const session = await requireAuth()
     if (!isSession(session)) return session
 
+    const url = new URL(request.url)
+    const coopId = url.searchParams.get("cooperative_id")
+
+    // Cooperative-scoped access: only super admins can view global aggregates
+    if (!session.is_super_admin) {
+      if (!coopId || !session.admin_cooperative_ids?.includes(coopId)) {
+        return NextResponse.json(
+          { error: "Admin access required for the specified cooperative" },
+          { status: 403 }
+        )
+      }
+    }
+
     // All cooperatives with stats
-    const { data: cooperatives } = await supabase
+    let coopQuery = supabase
       .from("cooperatives")
       .select("*")
       .order("created_at", { ascending: false })
 
-    // All prosumers — full rows needed for per-cooperative grouping; count kept for global total
-    const { data: prosumers, count: memberCount } = await supabase
+    // All prosumers — full rows needed for per-cooperative grouping
+    let prosumersQuery = supabase
       .from("prosumers")
       .select("id, cooperative_id", { count: "exact" })
 
     // All certificates
-    const { data: certificates } = await supabase
+    let certsQuery = supabase
       .from("certificates")
       .select("id, cooperative_id, total_kwh, status, mint_tx_hash, created_at, technology")
       .order("created_at", { ascending: false })
+
+    if (coopId) {
+      coopQuery = coopQuery.eq("id", coopId)
+      prosumersQuery = prosumersQuery.eq("cooperative_id", coopId)
+      certsQuery = certsQuery.eq("cooperative_id", coopId)
+    }
+
+    const [
+      { data: cooperatives },
+      { data: prosumers, count: memberCount },
+      { data: certificates },
+    ] = await Promise.all([coopQuery, prosumersQuery, certsQuery])
 
     const certs = certificates ?? []
     const coops = cooperatives ?? []

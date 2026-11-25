@@ -194,51 +194,52 @@ stellar contract build
 cargo test
 ```
 
-**Generate release manifest:**
-```bash
-pnpm manifest
-```
+**Deploy the cooperative contracts to Testnet:** see
+[`apps/contracts/DEPLOYMENT.md`](apps/contracts/DEPLOYMENT.md) for secure key
+setup, dry-run previews, deployment, and generated manifests. The deployment
+flow supports cooperative member generation-credit allocation; it is not an
+external certificate marketplace or I-REC/ESG certification.
+
+API and web tests run in CI on every pull request (`.github/workflows/ci.yml`).
+The workflow installs with a frozen lockfile (`pnpm install --frozen-lockfile`),
+caches the pnpm store, and fails the PR on any regression.
+
+## Service-Level Objectives & Degradation Policy
+
+Operational targets for the cooperative-management platform. Generation credits are assigned to cooperative members; this is **not** an external certificate marketplace and makes **no** I-REC/ESG certification claim. Stellar is the immutable evidence layer; the relational store is the operational system of record.
+
+### SLOs
+
+| Area | SLO | Target | Window | Measurement |
+|------|-----|--------|--------|-------------|
+| API availability | Successful (non-5xx) responses on `/api/*` | ≥ 99.5% | 30 days rolling | `http_requests_total` by status class |
+| Reading ingestion latency | `POST /api/meters/readings` p95 | ≤ 800 ms | 30 days rolling | `http_request_duration_seconds` histogram |
+| Chain status freshness | Age of last successful Stellar RPC status check | ≤ 60 s | 30 days rolling | `chain_status_age_seconds` gauge |
+| Data durability | Successful Supabase writes / attempted writes | ≥ 99.9% | 30 days rolling | `db_write_errors_total` vs `db_writes_total` |
+
+Error budget = 100% − SLO target over the window (e.g. API availability budget ≈ 3.6 h/month).
+
+### Degradation policy (user-visible behavior)
+
+| Dependency / SLO at risk | User-visible behavior |
+|--------------------------|-----------------------|
+| API availability budget < 25% | Banner: "Degraded performance — some actions may be slow." Read paths stay up; non-critical writes queued. |
+| Ingestion latency p95 > 800 ms | Readings still accepted; UI shows "Processing" state and retries idempotently. |
+| Chain status stale > 60 s | Chain-backed actions (mint/retire) disabled with "Chain temporarily unavailable — retry shortly"; cached balances shown read-only. |
+| Data durability budget < 25% | Writes fail closed with explicit error; no silent data loss; operators paged. |
+
+### Error-budget review & capacity
+
+- Weekly review of error-budget burn against the 30-day windows above.
+- When burn rate exceeds 2× the sustainable rate, freeze non-critical rollouts and update capacity assumptions (instance count, DB pool size, RPC rate limits) in the operations runbook.
+- Dashboards and alert rules live in `docs/operations/observability-runbook.md`; alerting is validated against a controlled SLO breach before each release.
 
 ---
 
-## Roadmap
+## Backup, Restore & Disaster Recovery
 
-| Level | What | Status |
-|-------|------|--------|
-| 1 — Internal registry | Generation credit = verifiable production record assigned to members | ✅ Live on Testnet |
-| 2 — Verified data | IoT oracle integration + independent meter validation | 🔄 Next |
-| 3 — Recognized standard | Optional path toward I-REC / Energy Web integration | 🗓 Future (not current focus) |
+Operational runbook for the cooperative-management platform. Generation credits are assigned to cooperative members; this is **not** an external certificate marketplace and makes **no** I-REC/ESG certification claim. Stellar is the immutable evidence layer; the relational store is the operational system of record.
 
-Level 3 is an option, not a commitment. BeEnergy is not an I-REC issuer and does not claim to be one. Any future integration with recognized standards would go through IRAM as the authorized Argentine body.
+### RPO / RTO targets
 
----
-
-## Model of record
-
-BeEnergy generates revenue from two sources, neither of which involves selling credits to external buyers:
-
-1. **SaaS subscription** — cooperative pays for the management dashboard (Starter, Pro, Enterprise plans).
-2. **Management fee** — per the Exa Energia model (Brazil reference), a fee for running credit allocation, billing support, and liquidation on behalf of the cooperative.
-
----
-
-## Contributing
-
-PRs welcome. Branch from `develop`, keep commits focused.
-
-```bash
-git checkout develop
-git checkout -b feat/your-feature
-pnpm install && pnpm dev
-# Open PR to develop
-```
-
----
-
-## License
-
-Apache-2.0 — See [LICENSE](LICENSE)
-
----
-
-**Built on Stellar · BuenDia Builders 2026**
+| Data class |

@@ -1,55 +1,20 @@
 "use client"
 
-import { usePathname, useRouter } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { useI18n } from "@/lib/i18n-context"
-import { useAuth } from "@/lib/auth-context"
-import { Home, History, LogOut, Zap, Award, Building2, Shield } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { LogOut } from "lucide-react"
 import { useWallet } from "@/lib/wallet-context"
-import { cn } from "@/lib/utils"
+import { NavMenu } from "@/components/nav-menu"
 import Link from "next/link"
 
 export function Sidebar() {
-  const pathname = usePathname()
   const router = useRouter()
   const { disconnectWallet } = useWallet()
   const { t } = useI18n()
-  const { session } = useAuth()
 
   const handleDisconnect = () => {
     disconnectWallet()
     router.push("/")
-  }
-
-  const menuItems = [
-    { icon: Home, label: t("sidebar.dashboard"), href: "/dashboard", enabled: true },
-    { icon: Award, label: t("sidebar.certificates"), href: "/certificates", enabled: true },
-    { icon: History, label: t("sidebar.activity"), href: "/activity", enabled: true },
-    { icon: Zap, label: t("sidebar.consumption"), href: "/consumption", enabled: true },
-  ]
-
-  // Role-based items
-  if (session && session.admin_cooperative_ids.length > 0) {
-    menuItems.push({
-      icon: Building2,
-      label: t("sidebar.cooperative"),
-      href: "/dashboard/cooperative",
-      enabled: true,
-    })
-  }
-
-  if (session?.is_super_admin) {
-    menuItems.push({
-      icon: Shield,
-      label: t("sidebar.admin"),
-      href: "/dashboard/admin",
-      enabled: true,
-    })
-  }
-
-  const isActive = (href: string) => {
-    if (href === "/dashboard") return pathname === "/dashboard"
-    return pathname.startsWith(href)
   }
 
   return (
@@ -61,38 +26,15 @@ export function Sidebar() {
         </Link>
       </div>
 
-      {/* Menu */}
-      <nav className="flex-1 p-3 space-y-0.5">
-        {menuItems.map((item) => {
-          const Icon = item.icon
-          const active = isActive(item.href)
-
-          return (
-            <button
-              key={item.href}
-              onClick={() => item.enabled && router.push(item.href)}
-              disabled={!item.enabled}
-              className={cn(
-                "w-full flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors text-left text-sm",
-                active
-                  ? "bg-sidebar-accent text-sidebar-primary font-semibold"
-                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-                !item.enabled && "opacity-40 cursor-not-allowed",
-              )}
-            >
-              <Icon className="w-4 h-4 shrink-0" strokeWidth={1.5} />
-              <span>{item.label}</span>
-            </button>
-          )
-        })}
-      </nav>
+      <NavMenu />
 
       <div className="p-3 border-t border-sidebar-border">
         <button
+          type="button"
           onClick={handleDisconnect}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground transition-colors"
         >
-          <LogOut className="w-4 h-4 shrink-0" strokeWidth={1.5} />
+          <LogOut className="w-4 h-4 shrink-0" strokeWidth={1.5} aria-hidden="true" />
           {t("sidebar.disconnect")}
         </button>
       </div>

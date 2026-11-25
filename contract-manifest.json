@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Canonical record of deployed Soroban contract IDs per environment. Used by promotion-gate CI to verify that the running deployment matches expected contracts before promoting to production.",
+  "version": "1",
+  "environments": {
+    "testnet": {
+      "stellar_network": "TESTNET",
+      "network_passphrase": "Test SDF Network ; September 2015",
+      "contracts": {
+        "energy_token": "CAUH3NUZGCNRHHVJK5S3FLXIS244GCNPC2LDZDU2SVOK66G3IGAGBBL2",
+        "energy_distribution": "CDXWZSWTM6DGYTDME3BEDE6U7JBHMG4YM7ZW237UZS2XTUWFVEEMIROR",
+        "community_governance": "CCH2EXXNSDW2BAKBIPFAG6CCZS6LV4VJFUP2CZZCW5LEY4JOAXBJD6YI"
+      },
+      "note": "Shared testnet contracts used for local dev and CI staging runs."
+    },
+    "staging": {
+      "stellar_network": "TESTNET",
+      "network_passphrase": "Test SDF Network ; September 2015",
+      "contracts": {
+        "energy_token": "",
+        "energy_distribution": "",
+        "community_governance": ""
+      },
+      "note": "Staging-specific contract deployments. Update these IDs after each staging deploy."
+    },
+    "production": {
+      "stellar_network": "PUBLIC",
+      "network_passphrase": "Public Global Stellar Network ; September 2015",
+      "contracts": {
+        "energy_token": "",
+        "energy_distribution": "",
+        "community_governance": ""
+      },
+      "note": "Production mainnet contracts. Update ONLY after a successful staging rehearsal and manual approval."
+    }
+  }
+}
