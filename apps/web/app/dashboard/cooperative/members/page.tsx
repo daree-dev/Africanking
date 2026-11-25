@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { AddMemberModal } from "@/components/modals/add-member-modal"
 import { ShieldAlert, Users, Plus, ArrowLeft, Copy, Check } from "lucide-react"
+import { ADMIN_ROUTES } from "@/lib/navigation/admin-routes"
 
 interface MemberRow {
   id: string
@@ -104,7 +105,7 @@ function MembersContent() {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => router.push("/dashboard/cooperative")}
+                onClick={() => router.push(ADMIN_ROUTES.cooperative)}
                 className="shrink-0"
               >
                 <ArrowLeft className="w-4 h-4" />

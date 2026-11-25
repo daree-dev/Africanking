@@ -11,3 +11,5 @@ scripts/.testnet-users.json
 .claude/
 *.tsbuildinfo
 design-system/
+__pycache__/
+*.py[cod]

@@ -8,7 +8,10 @@
 //! - Quema: Cuando se consume energía
 //! - Compatible con Stellar DEX para trading P2P
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short,
+    Address, BytesN, Env, String, Symbol,
+};
 use stellar_access::access_control::{self as access_control, AccessControl};
 use stellar_contract_utils::pausable::{self as pausable, Pausable};
 use stellar_contract_utils::upgradeable::UpgradeableInternal;
@@ -22,6 +25,18 @@ const MAX_COOPERATIVE_ID_LEN: u32 = 64;
 #[contracttype]
 pub enum DataKey {
     CooperativeId,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MintEvidence {
+    pub cooperative_id: String,
+    pub period_start: String,
+    pub period_end: String,
+    pub operation_id: String,
+    pub evidence_hash: BytesN<32>,
+    pub evidence_version: u32,
+    pub evidence_ref: String,
 }
 
 #[derive(Upgradeable)]
@@ -85,6 +100,72 @@ impl EnergyToken {
     pub fn mint_energy(e: &Env, to: Address, amount: i128, minter: Address) {
         e.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Base::mint(e, &to, amount);
+        
+        let contract_addr = e.current_contract_address();
+        let coop_id: String = e
+            .storage()
+            .instance()
+            .get(&DataKey::CooperativeId)
+            .unwrap_or_else(|| String::from_str(e, ""));
+        
+        e.events().publish(
+            (
+                soroban_sdk::Symbol::new(e, "token_minted"),
+                contract_addr.clone(),
+                to.clone(),
+            ),
+            (
+                contract_addr,
+                to,
+                amount,
+                minter,
+                coop_id,
+                e.ledger().timestamp(),
+            ),
+        );
+    }
+
+    /// Mint with a privacy-safe reference to reviewed cooperative evidence.
+    #[when_not_paused]
+    #[only_role(minter, "minter")]
+    pub fn mint_energy_with_evidence(
+        e: &Env,
+        to: Address,
+        amount: i128,
+        minter: Address,
+        cooperative_id: String,
+        period_start: String,
+        period_end: String,
+        operation_id: String,
+        evidence_hash: BytesN<32>,
+        evidence_version: u32,
+        evidence_ref: String,
+    ) {
+        let evidence = MintEvidence {
+            cooperative_id,
+            period_start,
+            period_end,
+            operation_id,
+            evidence_hash,
+            evidence_version,
+            evidence_ref,
+        };
+        assert!(evidence.cooperative_id.len() > 0, "cooperative_id is required");
+        assert!(evidence.cooperative_id.len() <= 64, "cooperative_id is too long");
+        assert!(evidence.period_start.len() == 10, "period_start must use YYYY-MM-DD");
+        assert!(evidence.period_end.len() == 10, "period_end must use YYYY-MM-DD");
+        assert!(evidence.operation_id.len() > 0, "operation_id is required");
+        assert!(evidence.operation_id.len() <= 64, "operation_id is too long");
+        assert!(evidence.evidence_version == 1, "unsupported evidence version");
+        assert!(evidence.evidence_ref.len() > 0, "evidence_ref is required");
+        assert!(evidence.evidence_ref.len() <= 256, "evidence_ref is too long");
+
+        e.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        Base::mint(e, &to, amount);
+        e.events().publish(
+            (Symbol::new(e, "mint_evidence"),),
+            (amount, evidence),
+        );
     }
 
     /// Quema tokens cuando se consume energía
@@ -92,6 +173,29 @@ impl EnergyToken {
     pub fn burn_energy(e: &Env, from: Address, amount: i128) {
         e.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Base::burn(e, &from, amount);
+        
+        let contract_addr = e.current_contract_address();
+        let coop_id: String = e
+            .storage()
+            .instance()
+            .get(&DataKey::CooperativeId)
+            .unwrap_or_else(|| String::from_str(e, ""));
+        
+        e.events().publish(
+            (
+                soroban_sdk::Symbol::new(e, "token_burned"),
+                contract_addr.clone(),
+                from.clone(),
+            ),
+            (
+                contract_addr,
+                from,
+                amount,
+                coop_id,
+                soroban_sdk::Symbol::new(e, "retirement"),
+                e.ledger().timestamp(),
+            ),
+        );
     }
 
     /// Otorga rol de minter a una nueva dirección
@@ -102,6 +206,28 @@ impl EnergyToken {
         admin.require_auth();
         e.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         access_control::grant_role_no_auth(e, &admin, &new_minter, &symbol_short!("minter"));
+        
+        let contract_addr = e.current_contract_address();
+        let coop_id: String = e
+            .storage()
+            .instance()
+            .get(&DataKey::CooperativeId)
+            .unwrap_or_else(|| String::from_str(e, ""));
+        
+        e.events().publish(
+            (
+                soroban_sdk::Symbol::new(e, "minter_granted"),
+                contract_addr.clone(),
+                new_minter.clone(),
+            ),
+            (
+                contract_addr,
+                new_minter,
+                admin,
+                coop_id,
+                e.ledger().timestamp(),
+            ),
+        );
     }
 
     /// Revoca rol de minter de una dirección
@@ -112,6 +238,28 @@ impl EnergyToken {
         admin.require_auth();
         e.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         access_control::revoke_role_no_auth(e, &admin, &minter, &symbol_short!("minter"));
+        
+        let contract_addr = e.current_contract_address();
+        let coop_id: String = e
+            .storage()
+            .instance()
+            .get(&DataKey::CooperativeId)
+            .unwrap_or_else(|| String::from_str(e, ""));
+        
+        e.events().publish(
+            (
+                soroban_sdk::Symbol::new(e, "minter_revoked"),
+                contract_addr.clone(),
+                minter.clone(),
+            ),
+            (
+                contract_addr,
+                minter,
+                admin,
+                coop_id,
+                e.ledger().timestamp(),
+            ),
+        );
     }
 
     /// Verifica si una dirección tiene rol de minter
@@ -214,6 +362,20 @@ impl Pausable for EnergyToken {
         let admin = access_control::get_admin(e).expect("admin not set");
         assert!(caller == admin, "only admin can pause");
         pausable::pause(e);
+        
+        let contract_addr = e.current_contract_address();
+        e.events().publish(
+            (
+                soroban_sdk::Symbol::new(e, "contract_paused"),
+                contract_addr.clone(),
+            ),
+            (
+                contract_addr,
+                caller,
+                soroban_sdk::Symbol::new(e, "admin_pause"),
+                e.ledger().timestamp(),
+            ),
+        );
     }
 
     fn unpause(e: &Env, caller: Address) {
@@ -221,6 +383,19 @@ impl Pausable for EnergyToken {
         let admin = access_control::get_admin(e).expect("admin not set");
         assert!(caller == admin, "only admin can unpause");
         pausable::unpause(e);
+        
+        let contract_addr = e.current_contract_address();
+        e.events().publish(
+            (
+                soroban_sdk::Symbol::new(e, "contract_unpaused"),
+                contract_addr.clone(),
+            ),
+            (
+                contract_addr,
+                caller,
+                e.ledger().timestamp(),
+            ),
+        );
     }
 }
 

@@ -3,6 +3,9 @@
 import { useState, useEffect, type FormEvent } from "react"
 import { useWallet } from "@/lib/wallet-context"
 import { useEnergyToken } from "@/hooks/useEnergyToken"
+import { useCooperatives } from "@/hooks/useCooperatives"
+import { useAuth } from "@/lib/auth-context"
+import { WalletWriteError } from "@/lib/wallet/contract-write"
 import { useToast } from "@/hooks/use-toast"
 import {
   Card,
@@ -17,12 +20,16 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { LockKeyhole, ShieldAlert, Zap } from "lucide-react"
+import { ChainUnavailableError, ChainWritePendingError } from "@/lib/stellar/resilience"
 
 export function MintTokenPanel() {
-  const { address } = useWallet()
+  const { address, networkMismatch } = useWallet()
+  const { session } = useAuth()
+  const { cooperatives } = useCooperatives()
   const { mintEnergy, checkIsMinter, isLoading } = useEnergyToken()
   const { toast } = useToast()
 
+  const [cooperativeId, setCooperativeId] = useState("")
   const [recipient, setRecipient] = useState("")
   const [amount, setAmount] = useState("")
   const [hasMinterRole, setHasMinterRole] = useState<boolean | null>(null)
@@ -47,21 +54,30 @@ export function MintTokenPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address])
 
+  // Only cooperatives this account administers can be selected (all for super admins).
+  const selectableCoops = cooperatives.filter(
+    (c) => session?.is_super_admin || session?.admin_cooperative_ids.includes(c.id)
+  )
+  const selectedCoop = selectableCoops.find((c) => c.id === cooperativeId) ?? null
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
 
     const parsedAmount = parseFloat(amount)
-    if (!recipient.trim() || isNaN(parsedAmount) || parsedAmount <= 0) {
+    if (!selectedCoop || !recipient.trim() || isNaN(parsedAmount) || parsedAmount <= 0) {
       toast({
         title: "Invalid input",
-        description: "Provide a valid recipient address and a positive kWh amount.",
+        description: "Select a cooperative and provide a valid member address and a positive kWh amount.",
         variant: "destructive",
       })
       return
     }
 
     try {
-      const txHash = await mintEnergy(recipient.trim(), parsedAmount)
+      const txHash = await mintEnergy(recipient.trim(), parsedAmount, {
+        id: selectedCoop.id,
+        name: selectedCoop.name,
+      })
       toast({
         title: "Tokens minted",
         description: `${parsedAmount} HDROP → ${recipient.slice(0, 8)}… | Tx: ${txHash.slice(0, 10)}…${txHash.slice(-6)}`,
@@ -69,6 +85,24 @@ export function MintTokenPanel() {
       setRecipient("")
       setAmount("")
     } catch (err) {
+      if (err instanceof ChainWritePendingError) {
+        // Submitted without a verdict: neither success nor failure is known yet.
+        toast({
+          title: "Mint submitted — awaiting confirmation",
+          description: `Tx ${err.hash.slice(0, 10)}… was sent. Do not resubmit; the dashboard will update once the network confirms it.`,
+        })
+        setRecipient("")
+        setAmount("")
+        return
+      }
+      if (err instanceof ChainUnavailableError) {
+        toast({
+          title: "Stellar network unavailable",
+          description: "No transaction was submitted. You can safely retry later.",
+          variant: "destructive",
+        })
+        return
+      }
       toast({
         title: "Minting failed",
         description: err instanceof Error ? err.message : "Unknown error occurred.",
@@ -77,8 +111,8 @@ export function MintTokenPanel() {
     }
   }
 
-  const isFormDisabled = isLoading || hasMinterRole !== true
-  const isSubmitDisabled = isFormDisabled || !recipient.trim() || !amount
+  const isFormDisabled = isLoading || hasMinterRole !== true || !!networkMismatch
+  const isSubmitDisabled = isFormDisabled || !selectedCoop || !recipient.trim() || !amount
 
   return (
     <Card className="max-w-lg glass-card border-2 border-primary/20">
@@ -90,7 +124,8 @@ export function MintTokenPanel() {
           <CardTitle>Mint HDROP Tokens</CardTitle>
         </div>
         <CardDescription>
-          Issue new tokens to a recipient address. The connected wallet must
+          Assign generation credits to a cooperative member. You will review the
+          cooperative, amount and contract before signing. The connected wallet must
           hold the on-chain{" "}
           <code className="text-xs bg-muted px-1 py-0.5 rounded font-mono">
             minter
@@ -124,9 +159,36 @@ export function MintTokenPanel() {
           </Alert>
         )}
 
+        {networkMismatch && (
+          <Alert variant="destructive" className="bg-destructive/5 border-destructive/30">
+            <ShieldAlert />
+            <AlertDescription>
+              <p>{networkMismatch}. Switch your wallet network to continue.</p>
+            </AlertDescription>
+          </Alert>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="recipient">Recipient Address</Label>
+            <Label htmlFor="cooperative">Cooperative</Label>
+            <select
+              id="cooperative"
+              className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+              value={cooperativeId}
+              onChange={(e) => setCooperativeId(e.target.value)}
+              disabled={isFormDisabled}
+            >
+              <option value="">Select a cooperative…</option>
+              {selectableCoops.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="recipient">Member Address</Label>
             <Input
               id="recipient"
               type="text"

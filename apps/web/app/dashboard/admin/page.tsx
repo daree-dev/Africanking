@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { Suspense, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
+import Link from "next/link"
 import { useWallet } from "@/lib/wallet-context"
 import { useAuth } from "@/lib/auth-context"
 import { useI18n } from "@/lib/i18n-context"
@@ -14,13 +15,30 @@ import { Spinner } from "@/components/ui/spinner"
 import { Building2, Users, Zap, Award, Shield, ShieldAlert, ArrowRight, ExternalLink } from "lucide-react"
 import { InfoTooltip } from "@/components/shared/info-tooltip"
 import { getStellarExpertUrl } from "@/lib/utils"
+import { MintTokenPanel } from "@/components/admin/mint-token-panel"
+import {
+  ADMIN_ROUTES,
+  PLATFORM_ADMIN_SECTIONS,
+  hasAdminScope,
+  isPlatformAdminSection,
+} from "@/lib/navigation/admin-routes"
 
-export default function SuperAdminPage() {
+export default function PlatformAdminPage() {
+  return (
+    <Suspense fallback={null}>
+      <PlatformAdminContent />
+    </Suspense>
+  )
+}
+
+function PlatformAdminContent() {
   const { isConnected, isPending: walletPending } = useWallet()
   const { session, isLoading: authLoading } = useAuth()
   const { t } = useI18n()
   const router = useRouter()
   const { stats, loading, error } = useAdminStats()
+  const searchParams = useSearchParams()
+  const requestedSection = searchParams.get("section")
 
   useEffect(() => {
     if (!walletPending && !authLoading && !isConnected) {
@@ -31,7 +49,14 @@ export default function SuperAdminPage() {
   const isAccessDenied = !authLoading && !walletPending && session && !session.is_super_admin
   const isPageLoading = authLoading || walletPending || loading
 
-  const truncateAddress = (addr: string) => `${addr.slice(0, 6)}...${addr.slice(-4)}`
+  const isCooperativeAdmin = hasAdminScope(session, "cooperative")
+
+  // Deep links (`?section=token-issuance`, legacy `/admin`) scroll to the
+  // requested section once the content has rendered.
+  useEffect(() => {
+    if (isPageLoading || isAccessDenied || !isPlatformAdminSection(requestedSection)) return
+    document.getElementById(`admin-${requestedSection}`)?.scrollIntoView({ block: "start" })
+  }, [isPageLoading, isAccessDenied, requestedSection])
 
   return (
     <div className="min-h-screen bg-background">
@@ -41,9 +66,12 @@ export default function SuperAdminPage() {
 
         <div className="p-4 md:p-6">
           {/* Header */}
-          <div className="flex items-center gap-3 mb-6">
-            <Shield className="w-6 h-6 text-primary" />
-            <h1 className="text-2xl font-bold">{t("superAdmin.title")}</h1>
+          <div className="mb-6">
+            <div className="flex items-center gap-3">
+              <Shield className="w-6 h-6 text-primary" aria-hidden="true" />
+              <h1 className="text-2xl font-bold">{t("superAdmin.title")}</h1>
+            </div>
+            <p className="text-sm text-muted-foreground mt-1">{t("adminIa.platformScope")}</p>
           </div>
 
           {isPageLoading && (
@@ -57,6 +85,11 @@ export default function SuperAdminPage() {
               <CardContent className="p-12 text-center">
                 <ShieldAlert className="w-12 h-12 mx-auto mb-4 text-muted-foreground/30" />
                 <p className="text-muted-foreground">{t("superAdmin.accessDenied")}</p>
+                {isCooperativeAdmin && (
+                  <Link href={ADMIN_ROUTES.cooperative} className="inline-block mt-4 text-sm text-primary hover:underline">
+                    {t("adminIa.goToCooperativeAdmin")} →
+                  </Link>
+                )}
               </CardContent>
             </Card>
           )}
@@ -67,10 +100,30 @@ export default function SuperAdminPage() {
             </Card>
           )}
 
+          {!isPageLoading && !isAccessDenied && session?.is_super_admin && (
+            <nav aria-label={t("adminIa.sections")} className="mb-6 flex flex-wrap gap-2">
+              {PLATFORM_ADMIN_SECTIONS.map((section) => (
+                <a
+                  key={section}
+                  href={`?section=${section}`}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    router.replace(`${ADMIN_ROUTES.platform}?section=${section}`, { scroll: false })
+                    document.getElementById(`admin-${section}`)?.scrollIntoView({ block: "start" })
+                  }}
+                  aria-current={requestedSection === section ? "location" : undefined}
+                  className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted aria-[current=location]:bg-primary/10 aria-[current=location]:text-primary"
+                >
+                  {t(`adminIa.section.${section}`)}
+                </a>
+              ))}
+            </nav>
+          )}
+
           {!isPageLoading && !isAccessDenied && stats && (
             <>
               {/* Global Stats */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <section id="admin-overview" aria-label={t("adminIa.section.overview")} className="scroll-mt-20 grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                 <Card>
                   <CardContent className="p-4 text-center">
                     <div className="flex items-center justify-center gap-1 mb-2">
@@ -111,10 +164,10 @@ export default function SuperAdminPage() {
                     <p className="text-xs text-muted-foreground">{t("superAdmin.totalCertificates")}</p>
                   </CardContent>
                 </Card>
-              </div>
+              </section>
 
               {/* All Cooperatives Table */}
-              <Card className="mb-6">
+              <Card id="admin-cooperatives" className="mb-6 scroll-mt-20">
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Building2 className="w-5 h-5" />
@@ -159,7 +212,7 @@ export default function SuperAdminPage() {
               </Card>
 
               {/* Certificate Pipeline */}
-              <Card className="mb-6">
+              <Card id="admin-pipeline" className="mb-6 scroll-mt-20">
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Award className="w-5 h-5" />
@@ -188,7 +241,7 @@ export default function SuperAdminPage() {
               </Card>
 
               {/* System Health */}
-              <div className="grid lg:grid-cols-2 gap-4 md:gap-6">
+              <div id="admin-activity" className="grid lg:grid-cols-2 gap-4 md:gap-6 scroll-mt-20">
                 {/* Recent Mints */}
                 <Card>
                   <CardHeader>
@@ -260,6 +313,20 @@ export default function SuperAdminPage() {
                 </Card>
               </div>
             </>
+          )}
+
+          {/* Token issuance — moved here from the legacy /admin page. Rendered
+              independently of the stats request so a stats outage does not
+              hide it. The on-chain minter role is re-checked by the panel and
+              enforced by the token contract. */}
+          {!isPageLoading && !isAccessDenied && session?.is_super_admin && (
+            <section id="admin-token-issuance" aria-labelledby="admin-token-issuance-title" className="mt-6 scroll-mt-20">
+              <h2 id="admin-token-issuance-title" className="text-lg font-semibold mb-1">
+                {t("adminIa.section.token-issuance")}
+              </h2>
+              <p className="text-sm text-muted-foreground mb-4">{t("adminIa.tokenIssuanceHelp")}</p>
+              <MintTokenPanel />
+            </section>
           )}
         </div>
       </main>

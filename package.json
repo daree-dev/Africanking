@@ -7,10 +7,21 @@
     "dev": "turbo dev",
     "build": "turbo build",
     "lint": "turbo lint",
+    "type-check": "turbo type-check",
+    "check": "turbo type-check lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "test": "turbo test",
+    "test:api": "turbo test --filter=api",
+    "test:web": "turbo test --filter=web",
     "simulate": "npx tsx scripts/simulate-testnet.ts",
+    "reconcile:mints": "npx tsx scripts/reconcile-mints.ts",
     "meter:mock": "npx tsx scripts/smart-meter-mock.ts --continuous",
-    "meter:mock:backfill": "npx tsx scripts/smart-meter-mock.ts --backfill"
+    "meter:mock:backfill": "npx tsx scripts/smart-meter-mock.ts --backfill",
+    "audit:deps": "pnpm audit --audit-level=high",
+    "audit:rust": "cargo audit"
+  },
+  "pnpm": {
+    "overrides": {}
   },
   "devDependencies": {
     "prettier": "^3.5.3",

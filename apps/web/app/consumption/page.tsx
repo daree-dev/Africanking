@@ -11,8 +11,9 @@ import { DashboardHeader } from "@/components/dashboard-header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Spinner } from "@/components/ui/spinner"
-import { ArrowLeft, Zap, FileText, RefreshCw, CheckCircle2 } from "lucide-react"
+import { ArrowLeft, Zap, FileText, RefreshCw, CheckCircle2, ReceiptText } from "lucide-react"
 import { InfoTooltip } from "@/components/shared/info-tooltip"
+import { MemberSettlementPanel } from "@/components/settlement/member-settlement-panel"
 
 const STATUS_TOOLTIP: Record<string, string> = {
   pending: "Esta lectura está pendiente de validación por el administrador de tu cooperativa.",
@@ -70,11 +71,16 @@ export default function ConsumptionPage() {
       <main className="md:ml-64">
         <DashboardHeader />
 
-        <div className="p-4 md:p-6">
+        <div className="p-4 md:p-6 space-y-6">
           <Button onClick={() => router.push("/dashboard")} variant="ghost" className="mb-4 hover:bg-muted">
             <ArrowLeft className="w-4 h-4 mr-2" />
             {t("common.back")}
           </Button>
+
+          {/* Settlement credits for this member */}
+          {session && address && (
+            <MemberSettlementPanel memberAddress={address} cooperativeIds={session.cooperative_ids} />
+          )}
 
           <Card>
             <CardHeader>

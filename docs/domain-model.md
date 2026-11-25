@@ -141,90 +141,78 @@ Para cada entidad se responden tres preguntas:
 
 | Aspecto | Detalle |
 |---|---|
-| Producción del dato | La distribuidora instala y lee el medidor bidireccional |
-| Validación | Distribuidora; Ente Regulador puede fiscalizar |
-| Efecto | **Comercial** — es el **único instrumento** que determina la liquidación del balance neto |
+| Producción del dato | El Distribuidor instala y lee el medidor bidireccional |
+| Validación | Distribuidora; Ente Regulador Jurisdiccional fiscaliza |
+| Efecto | **Comercial** — es la única fuente válida para la liquidación del balance neto |
 
 ---
 
-### 2.9 Factura / crédito
+## 3. Créditos de generación BeEnergy vs. certificados I-REC
 
-**Fuente:** Ley 27.424, Art. 12 [Ley 27.424]; AFIP RG 5746/2025 [AFIP RG 5746/2025].
+Esta sección define el **límite de integración** entre los créditos de generación internos de BeEnergy y cualquier flujo I-REC / I-TRACK (E). Es normativa para el diseño: cualquier integración futura debe respetarla.
 
-| Aspecto | Detalle |
-|---|---|
-| Producción del dato | La distribuidora genera la factura reflejando volumen demandado, volumen inyectado, precios por kWh y balance neto |
-| Validación | El usuario puede disputar; el Ente Regulador revisa |
-| Efecto | **Comercial** — si hay saldo positivo, configura crédito imputable a facturas siguientes; el usuario puede solicitar la retribución del saldo en un plazo no superior a 6 meses [Res. 314/2018, Anexo] |
+### 3.1 Qué es un crédito de generación BeEnergy
 
----
+- Un **crédito de generación** es una unidad interna de asignación cooperativa: representa kWh generados por un equipo y asignados a los miembros de la cooperativa según cuotapartes.
+- Se calcula a partir de datos de medición (medidor bidireccional para liquidación comercial; SCADA solo como dato operativo).
+- **No es** un certificado, **no es** transferible fuera de la cooperativa, **no** representa un atributo ambiental certificado, y **no** habilita declaraciones ESG / Scope 2.
+- Su estado es interno: `assigned`, `settled`, etc. — nunca `issued`, `transferred` ni `retired` en el sentido de un registro formal.
 
-### 2.10 I-REC / IRAM / Registrante / Comprador
+### 3.2 Separación de responsabilidades en un flujo I-REC
 
-**Fuente:** IRAM I-TRACK page [IRAM I-TRACK page]; informe de mercado [IRAM I-TRACK page].
+Si en el futuro se integra un proveedor I-REC, cada responsabilidad debe vivir en un componente distinto y **nunca** mezclarse con el modelo de créditos internos:
 
-| Aspecto | Detalle |
-|---|---|
-| Producción del dato | El generador registra la planta ante IRAM; IRAM valida y habilita en el registro de Evident; IRAM valida generación y emite certificados |
-| Validación | IRAM como único organismo autorizado; Evident Services mantiene el registro global |
-| Efecto | **Comercial, pero sistema separado de Ley 27.424.** Cada I-REC = 1 MWh de atributos ambientales. Para usar los atributos, el certificado debe ser cancelado / retirado del registro |
+| Responsabilidad | Quién la ejerce | Dónde vive en BeEnergy |
+|---|---|---|
+| **Registro (registration)** | El registro I-REC (operado por Evident) mantiene las cuentas de participantes | Fuera de BeEnergy; solo se referencia por `provider_id` opaco |
+| **Emisor (issuer)** | IRAM como emisor autorizado de I-TRACK (E) / I-REC en Argentina | Fuera de BeEnergy; se referencia por identificador de emisor |
+| **Emisión (issuance)** | El emisor emite certificados por 1 MWh de atributos ambientales, contra evidencia de generación | Fuera de BeEnergy; BeEnergy solo puede aportar evidencia de medición, nunca emitir |
+| **Transferencia (transfer)** | El registro transfiere la titularidad de certificados entre cuentas | Fuera de BeEnergy; BeEnergy no transfiere certificados |
+| **Retiro (retirement)** | El registro retira certificados para una declaración de consumo | Fuera de BeEnergy; BeEnergy no retira ni declara en nombre de nadie |
 
-**Nota crítica:** los I-REC no se pueden transferir o revender después de cancelados; quedan asociados a un reclamo específico para un período de consumo determinado [IRAM I-TRACK page].
+Regla: BeEnergy **no** es registro, **no** es emisor, **no** emite, **no** transfiere y **no** retira certificados. Solo puede, en un futuro aprobado, actuar como fuente de evidencia de generación.
 
----
+### 3.3 Identificadores de proveedor y estado formal separados
 
-## 3. Distinciones críticas
+- Cualquier identificador de proveedor I-REC (registro, emisor, cuenta, certificado) es un **campo opaco y separado** (`provider_id`, `issuer_id`, `certificate_id`), nunca reutiliza el `id` de un crédito de generación BeEnergy.
+- El **estado formal** de un certificado (`issued`, `transferred`, `retired`) es un dominio distinto del estado de un crédito interno (`assigned`, `settled`). No se mapean uno a uno ni se comparten enums.
+- Un crédito de generación BeEnergy **no puede** marcarse como `issued` / `certified` / `I-REC` en el modelo de datos.
 
-### 3.1 Medición comercial vs lectura operativa del inversor
+### 3.4 Sin afirmaciones formales hasta acuerdo y decisión de producto
 
-El **medidor bidireccional del Distribuidor** es el instrumento comercial bajo Ley 27.424 [Res. 314/2018, Anexo]. El inversor / SCADA produce datos operativos que pueden usarse para monitoreo y — para > 10 kW — para fines estadísticos y cálculo del VAD, pero **no para la liquidación del balance neto**.
+- BeEnergy **no** debe enviar datos a un registro, **no** debe solicitar emisión, y **no** debe representar (en UI, docs, API o marketing) que un crédito interno es un I-REC, hasta que existan:
+  1. un **acuerdo de proveedor aprobado**, y
+  2. una **decisión de producto** explícita que defina el alcance.
+- Mientras no existan ambos, cualquier integración I-REC es solo un límite documentado, no una funcionalidad.
 
-El repositorio hoy no distingue estos dos conceptos. Ver `apps/web/app/api/readings/route.ts` y `apps/web/app/api/meters/readings/route.ts`.
+### 3.5 Migración y rollout
 
-### 3.2 Ley 27.424 (balance neto) vs I-REC (atributos ambientales)
-
-Son **dos sistemas independientes**:
-
-- **Ley 27.424:** balance neto de facturación. Crédito monetario por kWh inyectado, valorizado al precio que el distribuidor paga en el MEM [Res. 314/2018, Anexo].
-- **I-REC:** certificado de atributos ambientales de 1 MWh, emitido por IRAM, registrado en Evident, cancelable para reclamos de Scope 2 [IRAM I-TRACK page].
-
-Un Usuario-Generador bajo Ley 27.424 **no obtiene I-REC automáticamente**. Debe registrar su planta ante IRAM y seguir el proceso de emisión / cancelación.
-
----
-
-## 4. Open questions
-
-1. ¿Puede una cooperativa que actúa como distribuidora y posee su propia planta de generación acogerse simultáneamente al balance neto como Usuario-Generador y al mercado de I-REC? Las fuentes no lo aclaran explícitamente.
-
-2. ¿Cuál es el estándar técnico exacto de "medición en tiempo real" que Res. 287/2025 exige para UG Comunitario Virtual? La resolución solo dice "medidores cuyas características tecnológicas así lo permitan" [Res. 287/2025], sin especificar protocolo ni frecuencia.
-
-3. ¿Cómo se resuelve la titularidad de atributos ambientales cuando un Usuario-Generador bajo Ley 27.424 también registra su planta para I-REC? ¿Hay riesgo de doble conteo entre el crédito monetario del balance neto y el certificado ambiental?
-
-4. El repositorio modela "certificates" en `apps/web/app/api/certificates/`. ¿Esos endpoints deben reinterpretarse como créditos internos de BeEnergy, o deben eliminarse en favor de una integración separada con el registro de IRAM?
-
-5. ¿El admin de una cooperativa debe ser un prosumidor registrado? La pregunta queda abierta en `docs/next-steps/analisis-flujo-cooperativa-vs-erd.md`; el modelo legal de UG Comunitario sugiere que sí, porque los participantes son usuarios del mismo distribuidor [Res. 287/2025].
-
-6. ¿Los tokens hoy minteados desde `kwh_generated` (ver `research/net-vs-gross-generation.md`) deben re-interpretarse a la luz de las tres categorías legales de UG? Las categorías no son equivalentes: Individual, Comunitario y Comunitario Virtual tienen distinta base de cálculo.
+- No hay migración de datos: los créditos de generación existentes permanecen como créditos internos; no se reetiquetan como certificados.
+- Si en el futuro se agregan campos de proveedor, deben ser **aditivos y opcionales** (nullable), sin alterar el significado de los créditos existentes.
+- Cualquier cambio de etiquetado debe revisarse contra este documento y contra `docs/domain-model.md` §0.
 
 ---
 
+## 4. Open Questions
 
-## 5. Fuentes
+- ¿La planta de propiedad cooperativa (§2.6) opera bajo Ley 27.424 o bajo otro régimen (MEM/MATER)?
+- ¿Qué evidencia de medición aceptaría un emisor I-REC para emitir, y bajo qué acuerdo de proveedor?
+- ¿Qué decisión de producto habilitaría (si alguna) una integración I-REC, y con qué alcance?
 
-- **Ley 27.424 (2017)** — Régimen de Fomento a la Generación Distribuida de Energía Renovable Integrada a la Red Eléctrica Pública. https://www.argentina.gob.ar/normativa/nacional/ley-27424-271217
-- **Decreto 986/2018** — Reglamentación de la Ley 27.424. https://www.argentina.gob.ar/normativa/nacional/decreto-986-2018-315667
-- **Resolución 314/2018** — Normas de implementación de la Ley 27.424. https://www.argentina.gob.ar/normativa/nacional/resoluci%C3%B3n-314-2018-315671
-- **Resolución 287/2025** — Sustituye el Capítulo 2 de la Res. 314/2018 (categorías de Usuario-Generador). https://www.boletinoficial.gob.ar/
-- **Resolución 608/2023** — Incorpora la definición de "Contrato de Generación Eléctrica bajo Modalidad Distribuida Comunitaria". https://www.argentina.gob.ar/normativa/nacional/resoluci%C3%B3n-608-2023-390682
-- **AFIP RG 5746/2025** — Detalle de facturación para inyección de energía. https://www.afip.gob.ar/
-- **IRAM I-TRACK (E) / I-REC** — Página oficial de IRAM. https://www.iram.org.ar/servicio/itrack-irec/
-- **ENRE** — Ente Nacional Regulador de la Electricidad. https://www.argentina.gob.ar/enre
-- **Documentos internos citados:** `docs/2-HOW-IT-WORKS.md`, `docs/3-DATA-FLOW.md`, `docs/5-CONTRACTS.md`, `docs/next-steps/analisis-flujo-cooperativa-vs-erd.md`, `research/net-vs-gross-generation.md`.
+---
 
+## 5. Referencias
 
+- Ley 27.424 — Régimen de Fomento a la Generación Distribuida de Energía Renovable.
+- Res. 314/2018 — Anexo, procedimiento de conexión y balance neto.
+- Res. 287/2025 — Categorías de Usuario-Generador.
+- Res. 608/2023 — Contrato de Generación Eléctrica bajo Modalidad Distribuida Comunitaria.
+- AFIP RG 5746/2025 — Aspectos fiscales.
+- IRAM I-TRACK page — Emisor autorizado de I-TRACK (E) / I-REC en Argentina.
+- ENRE — Ente Nacional Regulador de la Electricidad.
 
-## 6. Nota final para revisores
+---
 
-Este documento reemplaza conceptualmente el vocabulario de "proto-certificado", "comprador externo" y "token = atributo ambiental" ya corregido en `docs/2-HOW-IT-WORKS.md` (Pivot #2). Bajo el marco argentino, un token de BeEnergy es una unidad de contabilidad interna de la plataforma — un **crédito de generación asignado a un miembro**, no un certificado ambiental. El atributo ambiental transferible en Argentina se emite a través de IRAM y se registra en Evident.
+## 6. Nota sobre créditos internos
 
-Si un feature futuro necesita hacer una declaración ambiental, debe ir por IRAM — no por el contrato `energy_token`. Esto es consistente con el Pivot #2 (`memory/product-research.md`): BeEnergy no vende certificados a terceros, así que esta pregunta no es urgente, pero el principio se mantiene si el producto evoluciona hacia ahí.
+Los créditos de generación BeEnergy se asignan internamente a los miembros de la cooperativa. No son un mercado de certificados externo ni una afirmación de certificación I-REC/ESG. Ver §3 para el límite de integración.
