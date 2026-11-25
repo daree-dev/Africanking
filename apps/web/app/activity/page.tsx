@@ -6,91 +6,76 @@ import { useWallet } from "@/lib/wallet-context"
 import { useAuth } from "@/lib/auth-context"
 import { useI18n } from "@/lib/i18n-context"
 import { useHorizonPayments } from "@/hooks/useHorizonPayments"
+import { useContractEvents } from "@/hooks/useContractEvents"
 import { useEvents } from "@/hooks/useEvents"
 import { Sidebar } from "@/components/sidebar"
 import { DashboardHeader } from "@/components/dashboard-header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { ArrowLeft, ArrowDownLeft, ArrowUpRight, Loader2, AlertCircle, ExternalLink, Flame, Coins } from "lucide-react"
+import { ArrowLeft, ArrowDownLeft, ArrowUpRight, Loader2 } from "lucide-react"
 import Link from "next/link"
-import { STELLAR_CONFIG } from "@/lib/contracts-config"
-
-function formatDate(isoString: string): string {
-  const date = new Date(isoString)
-  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
-}
-
-function formatTime(isoString: string): string {
-  const date = new Date(isoString)
-  return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-}
-
-type ActivityItem = {
-  id: string
-  type: "payment" | "mint" | "burn"
-  created_at: string
-  tx_hash?: string
-  amount?: string
-  asset?: string
-  isIncoming?: boolean
-  description?: string
-}
+import { APP_NETWORK } from "@/lib/stellar-network"
+import {
+  contractEventToDisplay,
+  mergeActivity,
+  paymentToDisplay,
+  recordedEventToActivity,
+} from "@/lib/activity/display"
+import type { ActivitySource } from "@/lib/activity/types"
+import {
+  ActivityRow,
+  DataSourceLine,
+  LoadMoreButton,
+  NetworkNotice,
+  SourceNotice,
+} from "@/components/activity/activity-list"
 
 export default function ActivityPage() {
-  const { isConnected, address } = useWallet()
+  const { isConnected, address, networkMismatch: walletMismatch } = useWallet()
   const { session, isLoading: authLoading } = useAuth()
   const { t } = useI18n()
   const router = useRouter()
-  const { payments, isLoading: paymentsLoading, error: paymentsError, refetch: refetchPayments } = useHorizonPayments(address)
-  const { events, isLoading: eventsLoading, error: eventsError, refetch: refetchEvents } = useEvents(address)
+  const payments = useHorizonPayments(address)
+  const contractEvents = useContractEvents(address)
+  const recorded = useEvents(address)
 
-  const isLoading = paymentsLoading || eventsLoading
-  const error = paymentsError || eventsError
+  const isInitialLoading =
+    (payments.isLoading || contractEvents.isLoading || recorded.isLoading) &&
+    payments.records.length === 0 &&
+    contractEvents.records.length === 0 &&
+    recorded.events.length === 0
 
-  const refetch = () => {
-    refetchPayments()
-    refetchEvents()
+
+  const sources = useMemo<ActivitySource[]>(
+    () => [
+      payments.source,
+      contractEvents.source,
+      { kind: "cooperative-records", network: APP_NETWORK.network, endpoint: "Africanking API" },
+    ],
+    [payments.source, contractEvents.source]
+  )
+
+  const items = useMemo(() => {
+    if (!address) return []
+    return mergeActivity([
+      payments.records.map((p) => paymentToDisplay(p, address, APP_NETWORK)),
+      contractEvents.records.map((e) => contractEventToDisplay(e, address, APP_NETWORK, "soroban-rpc")),
+      recorded.events.map((e) =>
+        contractEventToDisplay(recordedEventToActivity(e), address, APP_NETWORK, "cooperative-records")
+      ),
+    ])
+  }, [address, payments.records, contractEvents.records, recorded.events])
+
+  const refetchAll = () => {
+    payments.refetch()
+    contractEvents.refetch()
+    recorded.refetch()
   }
 
-  const mergedActivity = useMemo(() => {
-    const items: ActivityItem[] = []
-
-    // Add Horizon payments
-    payments.forEach((payment) => {
-      const isIncoming = payment.to === address
-      const assetLabel =
-        payment.asset_type === "native"
-          ? "XLM"
-          : payment.asset_code ?? payment.asset_type
-
-      items.push({
-        id: payment.id,
-        type: "payment",
-        created_at: payment.created_at,
-        tx_hash: payment.transaction_hash,
-        amount: payment.amount ?? payment.source_amount,
-        asset: assetLabel,
-        isIncoming,
-        description: payment.type.replace(/_/g, " "),
-      })
-    })
-
-    // Add mint/burn events
-    events.forEach((event) => {
-      items.push({
-        id: event.id,
-        type: event.type,
-        created_at: event.created_at,
-        tx_hash: event.tx_hash,
-        amount: event.amount.toString(),
-        asset: "HDROP",
-        description: event.type === "mint" ? "Token Mint" : "Token Burn",
-      })
-    })
-
-    // Sort by date descending
-    return items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-  }, [payments, events, address])
+  const loadMore = () => {
+    if (payments.hasMore) payments.loadMore()
+    if (contractEvents.hasMore) contractEvents.loadMore()
+  }
 
   useEffect(() => {
     if (!authLoading && !isConnected && !session) {
@@ -114,6 +99,8 @@ export default function ActivityPage() {
             <ArrowLeft className="w-4 h-4 mr-2" />
             {t("common.back")}
           </Button>
+
+          <NetworkNotice walletMismatch={walletMismatch} configIssues={APP_NETWORK.issues} />
 
           {/* Navigation cards */}
           <div className="grid gap-6 md:grid-cols-2">
@@ -156,90 +143,61 @@ export default function ActivityPage() {
             </Link>
           </div>
 
-          {/* Recent payments from Horizon */}
+          {/* Recent activity: Horizon payments + Soroban contract events + cooperative records */}
           <Card>
             <CardHeader>
               <CardTitle className="text-xl">{t("activity.recentPayments")}</CardTitle>
               <CardDescription>{t("activity.recentPaymentsDescription")}</CardDescription>
+              <DataSourceLine sources={sources} />
             </CardHeader>
-            <CardContent>
-              {isLoading ? (
+            <CardContent className="space-y-3">
+              <SourceNotice
+                sourceKind="horizon"
+                status={payments.status}
+                errorKind={payments.errorKind}
+                onRetry={payments.refetch}
+              />
+              <SourceNotice
+                sourceKind="soroban-rpc"
+                status={contractEvents.status}
+                errorKind={contractEvents.errorKind}
+                unsupportedReason={contractEvents.unsupportedReason}
+                onRetry={contractEvents.refetch}
+              />
+              {recorded.error && (
+                <SourceNotice
+                  sourceKind="cooperative-records"
+                  status="error"
+                  errorKind="network"
+                  onRetry={recorded.refetch}
+                />
+              )}
+
+              {isInitialLoading ? (
                 <div className="flex items-center justify-center py-8 text-muted-foreground">
                   <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                   {t("activity.loading")}
                 </div>
-              ) : error ? (
+              ) : items.length === 0 ? (
                 <div className="flex flex-col items-center gap-3 py-8 text-muted-foreground">
-                  <div className="flex items-center gap-2 text-destructive">
-                    <AlertCircle className="w-5 h-5" />
-                    <span>{t("activity.errorFetching")}</span>
-                  </div>
-                  <Button variant="outline" size="sm" onClick={refetch}>
+                  <span>{t("activity.noTransactions")}</span>
+                  <Button variant="outline" size="sm" onClick={refetchAll}>
                     {t("activity.retry")}
                   </Button>
                 </div>
-              ) : mergedActivity.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">{t("activity.noTransactions")}</div>
               ) : (
                 <div className="space-y-3">
-                  {mergedActivity.slice(0, 10).map((item) => {
-                    const networkType = STELLAR_CONFIG.NETWORK === "testnet" ? "testnet" : "public"
-                    const stellarExpertUrl = `https://stellar.expert/explorer/${networkType}/tx/${item.tx_hash}`
-
-                    let icon = <ArrowUpRight className="w-5 h-5 text-primary" />
-                    let color = "text-primary"
-                    let prefix = ""
-
-                    if (item.type === "mint") {
-                      icon = <Coins className="w-5 h-5 text-success" />
-                      color = "text-success"
-                      prefix = "+"
-                    } else if (item.type === "burn") {
-                      icon = <Flame className="w-5 h-5 text-destructive" />
-                      color = "text-destructive"
-                      prefix = "-"
-                    } else if (item.isIncoming) {
-                      icon = <ArrowDownLeft className="w-5 h-5 text-success" />
-                      color = "text-success"
-                      prefix = "+"
-                    } else {
-                      prefix = "-"
-                    }
-
-                    return (
-                      <div
-                        key={item.id}
-                        className="flex items-center gap-3 p-4 rounded-lg hover:bg-muted transition-colors border border-border"
-                      >
-                        <div className="flex-shrink-0">{icon}</div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p className="font-medium text-sm md:text-base capitalize">
-                              {item.description}
-                            </p>
-                            {item.tx_hash && (
-                              <a
-                                href={stellarExpertUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-muted-foreground hover:text-primary transition-colors"
-                              >
-                                <ExternalLink className="w-4 h-4" />
-                              </a>
-                            )}
-                          </div>
-                          <p className="text-xs md:text-sm text-muted-foreground">
-                            {formatDate(item.created_at)} · {formatTime(item.created_at)}
-                          </p>
-                        </div>
-                        <div className={`flex-shrink-0 font-semibold text-sm md:text-base ${color}`}>
-                          {prefix}
-                          {item.amount ?? "–"} {item.asset}
-                        </div>
-                      </div>
-                    )
-                  })}
+                  {items.map((item) => (
+                    <ActivityRow key={item.id} item={item} />
+                  ))}
                 </div>
+              )}
+
+              {(payments.hasMore || contractEvents.hasMore) && (
+                <LoadMoreButton
+                  onClick={loadMore}
+                  loading={payments.isLoadingMore || contractEvents.isLoadingMore}
+                />
               )}
             </CardContent>
           </Card>

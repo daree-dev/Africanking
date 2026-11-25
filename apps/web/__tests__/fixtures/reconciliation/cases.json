@@ -1,0 +1,80 @@
+{
+  "contract": "CAUH3NUZGCNRHHVJK5S3FLXIS244GCNPC2LDZDU2SVOK66G3IGAGBBL2",
+  "otherContract": "CDXWZSWTM6DGYTDME3BEDE6U7JBHMG4YM7ZW237UZS2XTUWFVEEMIROR",
+  "recipient": "GCHCYTHV4JSIJNCN56EIEXZNTB6JUHYX25FTSYFOM4DDVGV7UXWOHLCW",
+  "otherRecipient": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "evidence": {
+    "confirmed": {
+      "hash": "aaaa000000000000000000000000000000000000000000000000000000000001",
+      "status": "SUCCESS",
+      "ledger": 1000,
+      "latest_ledger": 1200,
+      "oldest_ledger": 900,
+      "mint_events": [
+        {
+          "contract_id": "CAUH3NUZGCNRHHVJK5S3FLXIS244GCNPC2LDZDU2SVOK66G3IGAGBBL2",
+          "to": "GCHCYTHV4JSIJNCN56EIEXZNTB6JUHYX25FTSYFOM4DDVGV7UXWOHLCW",
+          "amount": "125000000"
+        }
+      ]
+    },
+    "failed": {
+      "hash": "bbbb000000000000000000000000000000000000000000000000000000000002",
+      "status": "FAILED",
+      "ledger": 1001,
+      "latest_ledger": 1200,
+      "oldest_ledger": 900,
+      "mint_events": []
+    },
+    "missing": {
+      "hash": "cccc000000000000000000000000000000000000000000000000000000000003",
+      "status": "NOT_FOUND",
+      "ledger": null,
+      "latest_ledger": 1200,
+      "oldest_ledger": 900,
+      "mint_events": []
+    },
+    "conflictingAmount": {
+      "hash": "dddd000000000000000000000000000000000000000000000000000000000004",
+      "status": "SUCCESS",
+      "ledger": 1002,
+      "latest_ledger": 1200,
+      "oldest_ledger": 900,
+      "mint_events": [
+        {
+          "contract_id": "CAUH3NUZGCNRHHVJK5S3FLXIS244GCNPC2LDZDU2SVOK66G3IGAGBBL2",
+          "to": "GCHCYTHV4JSIJNCN56EIEXZNTB6JUHYX25FTSYFOM4DDVGV7UXWOHLCW",
+          "amount": "999"
+        }
+      ]
+    },
+    "conflictingContract": {
+      "hash": "eeee000000000000000000000000000000000000000000000000000000000005",
+      "status": "SUCCESS",
+      "ledger": 1003,
+      "latest_ledger": 1200,
+      "oldest_ledger": 900,
+      "mint_events": [
+        {
+          "contract_id": "CDXWZSWTM6DGYTDME3BEDE6U7JBHMG4YM7ZW237UZS2XTUWFVEEMIROR",
+          "to": "GCHCYTHV4JSIJNCN56EIEXZNTB6JUHYX25FTSYFOM4DDVGV7UXWOHLCW",
+          "amount": "125000000"
+        }
+      ]
+    },
+    "conflictingRecipient": {
+      "hash": "ffff000000000000000000000000000000000000000000000000000000000006",
+      "status": "SUCCESS",
+      "ledger": 1004,
+      "latest_ledger": 1200,
+      "oldest_ledger": 900,
+      "mint_events": [
+        {
+          "contract_id": "CAUH3NUZGCNRHHVJK5S3FLXIS244GCNPC2LDZDU2SVOK66G3IGAGBBL2",
+          "to": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "amount": "125000000"
+        }
+      ]
+    }
+  }
+}

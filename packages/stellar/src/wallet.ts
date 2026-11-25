@@ -8,7 +8,33 @@ import {
 } from "@creit.tech/stellar-wallets-kit";
 import { Horizon } from "@stellar/stellar-sdk";
 import { storage } from "./storage"
-import { networkPassphrase, stellarNetwork, getHorizonHost } from "./stellar-config";
+import { networkPassphrase, stellarNetwork, horizonUrl } from "./stellar-config";
+
+export interface LiveWalletInfo {
+  address: string | null
+  network: string | null
+  networkPassphrase: string | null
+}
+
+/**
+ * Ask the wallet extension directly for its current account and network,
+ * bypassing cached localStorage state. Used to revalidate around signing.
+ */
+export const getLiveWalletInfo = async (): Promise<LiveWalletInfo> => {
+  const kit = getKit();
+  let address: string | null = null;
+  try {
+    address = (await kit.getAddress()).address || null;
+  } catch {
+    address = null;
+  }
+  try {
+    const net = await kit.getNetwork();
+    return { address, network: net.network || null, networkPassphrase: net.networkPassphrase || null };
+  } catch {
+    return { address, network: null, networkPassphrase: null };
+  }
+};
 
 // Initialize Stellar Wallets Kit
 let kitInstance: StellarWalletsKit | null = null;
@@ -33,6 +59,7 @@ export type MappedBalances = Record<string, Horizon.HorizonApi.BalanceLine>;
 export interface ConnectResult {
   address: string
   network: string
+  networkPassphrase: string
 }
 
 export const connectWallet = async (): Promise<ConnectResult | null> => {
@@ -60,18 +87,22 @@ export const connectWallet = async (): Promise<ConnectResult | null> => {
         storage.setItem("walletAddress", addrResult.address);
 
         let networkStr = "";
+        let passphraseStr = "";
         try {
           const netResult = await kit.getNetwork();
           networkStr = netResult.network || "";
           storage.setItem("walletNetwork", networkStr);
-          storage.setItem("networkPassphrase", netResult.networkPassphrase || "");
+          passphraseStr = netResult.networkPassphrase || "";
+          storage.setItem("networkPassphrase", passphraseStr);
         } catch {
-          // Wallet doesn't support getNetwork — use configured defaults
-          storage.setItem("walletNetwork", stellarNetwork);
-          storage.setItem("networkPassphrase", networkPassphrase);
+          // Wallet doesn't report its network. Leave it empty rather than
+          // assuming the configured network: write actions then rely on the
+          // signature check, and the UI shows the network as unverified.
+          storage.setItem("walletNetwork", "");
+          storage.setItem("networkPassphrase", "");
         }
 
-        resolveResult({ address: addrResult.address, network: networkStr });
+        resolveResult({ address: addrResult.address, network: networkStr, networkPassphrase: passphraseStr });
       }).catch(() => {
         resolveResult(null);
       });
@@ -90,8 +121,8 @@ export const disconnectWallet = async (): Promise<void> => {
   storage.removeItem("networkPassphrase");
 };
 
-// Create Horizon server instance
-const horizon = new Horizon.Server(getHorizonHost(stellarNetwork), {
+// Create Horizon server instance — same configured endpoint as activity history
+const horizon = new Horizon.Server(horizonUrl, {
   allowHttp: stellarNetwork === "LOCAL",
 });
 

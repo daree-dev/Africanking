@@ -1,0 +1,92 @@
+name: Contracts CI
+
+on:
+  push:
+    paths:
+      - 'apps/contracts/**'
+      - '.github/workflows/contracts-ci.yml'
+  pull_request:
+    paths:
+      - 'apps/contracts/**'
+      - '.github/workflows/contracts-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contracts-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Soroban build, test, and WASM checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/contracts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        run: |
+          if [ -f rust-toolchain.toml ] || [ -f rust-toolchain ]; then
+            rustup show active-toolchain
+          else
+            echo "::error::Missing rust-toolchain.toml in apps/contracts; refusing to use an unpinned toolchain"
+            exit 1
+          fi
+          rustc --version
+          cargo --version
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            apps/contracts/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('apps/contracts/Cargo.lock', 'apps/contracts/rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Verify lockfile is committed and reproducible
+        run: |
+          if [ ! -f Cargo.lock ]; then
+            echo "::error::Cargo.lock is missing; lockfile reproducibility is required"
+            exit 1
+          fi
+          cargo metadata --locked --format-version 1 > /dev/null
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo test
+        run: cargo test --locked --all-targets
+
+      - name: Optimized contract build
+        run: cargo build --locked --release --target wasm32-unknown-unknown
+
+      - name: Verify expected WASM artifacts
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          artifacts=(target/wasm32-unknown-unknown/release/*.wasm)
+          if [ ${#artifacts[@]} -eq 0 ]; then
+            echo "::error::No WASM artifacts were produced by the optimized build"
+            exit 1
+          fi
+          for wasm in "${artifacts[@]}"; do
+            echo "Found WASM artifact: $wasm"
+          done
+
+      - name: Reject unexpected changes to tracked generated files
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain -- . ':(exclude)target')" ]; then
+            echo "::error::Tracked generated files changed during the build; commit regenerated artifacts or fix the build"
+            git status --porcelain -- . ':(exclude)target'
+            git diff -- . ':(exclude)target'
+            exit 1
+          fi
