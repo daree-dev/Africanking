@@ -7,6 +7,7 @@ import { createClient } from "@supabase/supabase-js"
 import { useWallet } from "@/lib/wallet-context"
 import { useAuth } from "@/lib/auth-context"
 import { WalletConfirmationModal } from "@/components/wallet-confirmation-modal"
+import { useI18n } from "@/lib/i18n-context"
 
 let _supabaseClient: ReturnType<typeof createClient> | null = null
 function getSupabaseClient() {
@@ -39,6 +40,7 @@ export default function LoginPage() {
   const router = useRouter()
   const { connectWallet } = useWallet()
   const { login } = useAuth()
+  const { t } = useI18n()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [showPass, setShowPass] = useState(false)
@@ -54,13 +56,13 @@ export default function LoginPage() {
     try {
       const { data, error: authError } = await getSupabaseClient().auth.signInWithPassword({ email, password })
       if (authError || !data.user) {
-        setError("Email o contraseña incorrectos.")
+        setError(t("auth.errorCredentials"))
         return
       }
       // Exchange Supabase session for our JWT via callback
       window.location.href = "/auth/callback/password?uid=" + data.user.id + "&email=" + encodeURIComponent(email)
     } catch {
-      setError("Error de red. Intentá de nuevo.")
+      setError(t("auth.errorNetwork"))
     } finally {
       setBusy(false)
     }
@@ -84,18 +86,18 @@ export default function LoginPage() {
         </a>
 
         <h1 style={{ fontSize: "clamp(2rem, 4vw, 2.75rem)", fontWeight: 700, letterSpacing: "-0.03em", color: "#0F172A", marginBottom: 12, lineHeight: 1.1 }}>
-          Ingresá a tu cuenta
+          {t("auth.signIn")}
         </h1>
         <p style={{ fontSize: 15, color: "#64748B", marginBottom: 40, lineHeight: 1.65 }}>
-          Usá tu email y contraseña para acceder.
+          {t("auth.signInSubtitle")}
         </p>
 
         <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 400 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 13, fontWeight: 500, color: "#0F172A" }}>Email</label>
+            <label style={{ fontSize: 13, fontWeight: 500, color: "#0F172A" }}>{t("auth.email")}</label>
             <input
               type="email"
-              placeholder="tu@empresa.com"
+              placeholder={t("auth.emailPlaceholder")}
               value={email}
               onChange={e => setEmail(e.target.value)}
               required
@@ -107,7 +109,7 @@ export default function LoginPage() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 13, fontWeight: 500, color: "#0F172A" }}>Contraseña</label>
+            <label style={{ fontSize: 13, fontWeight: 500, color: "#0F172A" }}>{t("auth.password")}</label>
             <div style={{ position: "relative" }}>
               <input
                 type={showPass ? "text" : "password"}
@@ -148,7 +150,7 @@ export default function LoginPage() {
               marginTop: 4,
             }}>
             {busy ? <Loader2 style={{ width: 16, height: 16, animation: "spin 1s linear infinite" }} /> : null}
-            Ingresar
+            {busy ? t("auth.submitting") : t("auth.submit")}
             {!busy && <ArrowRight style={{ width: 14, height: 14 }} />}
           </button>
 
@@ -157,7 +159,7 @@ export default function LoginPage() {
 
         <div style={{ marginTop: 16, padding: "12px 14px", background: "#F1F5F9", borderRadius: 8, border: "1px solid #E2E8F0" }}>
           <p style={{ fontSize: 12, color: "#64748B", margin: 0, lineHeight: 1.6 }}>
-            <span style={{ fontWeight: 600, color: "#0F172A" }}>Demo:</span>{" "}
+            <span style={{ fontWeight: 600, color: "#0F172A" }}>{t("auth.demoLabel")}</span>{" "}
             demo@beenergy.coop{" "}
             <span style={{ color: "#CBD5E1" }}>·</span>{" "}
             Demo2026!
@@ -166,7 +168,7 @@ export default function LoginPage() {
 
         <div style={{ marginTop: 24, paddingTop: 24, borderTop: "1px solid #E2E8F0" }}>
           <p style={{ fontSize: 12, color: "#94A3B8", marginBottom: 10 }}>
-            ¿Sos cooperativa con wallet Stellar?
+            {t("auth.walletPrompt")}
           </p>
           <button
             type="button"
@@ -181,7 +183,7 @@ export default function LoginPage() {
             }}
           >
             <Wallet size={15} color="#00537A" />
-            Conectar wallet Stellar
+            {t("auth.connectWallet")}
           </button>
         </div>
       </div>
@@ -191,7 +193,7 @@ export default function LoginPage() {
         onClose={() => setShowWalletModal(false)}
         onConfirm={async () => {
           const walletAddress = await connectWallet()
-          if (!walletAddress) throw new Error("Conexión cancelada")
+          if (!walletAddress) throw new Error(t("auth.cancelledWallet"))
           await login(walletAddress)
           router.push("/dashboard")
         }}

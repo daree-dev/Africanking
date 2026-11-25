@@ -6,13 +6,26 @@ interface RateLimitConfig {
   windowMs: number
 }
 
+/**
+ * Route-specific rate limits for authentication and write endpoints.
+ * Keys are matched against the `route` argument passed to checkRateLimit.
+ */
 const RATE_LIMITS: Record<string, RateLimitConfig> = {
+  // Authentication
   "auth/challenge": { maxRequests: 10, windowMs: 60_000 },
   "auth/verify": { maxRequests: 5, windowMs: 60_000 },
+  "auth/email": { maxRequests: 5, windowMs: 60_000 },
+  // Profile
+  "profile/update": { maxRequests: 10, windowMs: 60_000 },
+  // Ingestion
+  "meters/readings": { maxRequests: 10, windowMs: 60_000 },
+  readings: { maxRequests: 60, windowMs: 60_000 },
+  // Review
+  "review/submit": { maxRequests: 20, windowMs: 60_000 },
+  // Mint / retire (write actions)
   mint: { maxRequests: 10, windowMs: 3_600_000 },
   retire: { maxRequests: 10, windowMs: 3_600_000 },
-  readings: { maxRequests: 60, windowMs: 60_000 },
-  "meters/readings": { maxRequests: 10, windowMs: 60_000 },
+  // Defaults
   post_default: { maxRequests: 30, windowMs: 60_000 },
   get_default: { maxRequests: 120, windowMs: 60_000 },
 }
@@ -21,6 +34,36 @@ function getWindowStart(windowMs: number): string {
   const now = Date.now()
   const windowStart = now - (now % windowMs)
   return new Date(windowStart).toISOString()
+}
+
+function getRetryAfterSeconds(windowMs: number): number {
+  const now = Date.now()
+  const windowStart = now - (now % windowMs)
+  const windowEnd = windowStart + windowMs
+  return Math.max(1, Math.ceil((windowEnd - now) / 1000))
+}
+
+/**
+ * Atomically increments the counter for the given key/window and returns the
+ * resulting count. The `increment_rate_limit` RPC must perform an atomic
+ * upsert/increment so concurrent serverless instances share the same window.
+ */
+async function incrementCounter(
+  key: string,
+  windowStart: string
+): Promise<number> {
+  const { data, error } = await supabase.rpc("increment_rate_limit", {
+    p_key: key,
+    p_window_start: windowStart,
+  })
+
+  if (error) throw error
+
+  const count = (data as { count: number } | null)?.count
+  if (typeof count !== "number") {
+    throw new Error("increment_rate_limit returned no count")
+  }
+  return count
 }
 
 export async function checkRateLimit(
@@ -32,51 +75,58 @@ export async function checkRateLimit(
   const key = `${route}:${identifier}`
   const windowStart = getWindowStart(config.windowMs)
 
+  let count: number
   try {
-    // Upsert: increment or create
-    const { data } = await supabase
-      .from("rate_limits")
-      .upsert(
-        { key, window_start: windowStart, count: 1 },
-        { onConflict: "key,window_start" }
-      )
-      .select("count")
-      .single()
-
-    if (data && data.count > 1) {
-      // Already existed, need to increment
-      // The upsert reset it to 1, so we need a proper increment
-    }
-
-    // Use raw SQL for atomic increment
-    const { data: result } = await supabase.rpc("increment_rate_limit", {
-      p_key: key,
-      p_window_start: windowStart,
-    }).single()
-
-    const count = (result as { count: number } | null)?.count ?? 1
-
-    if (count > config.maxRequests) {
-      const retryAfter = Math.ceil(config.windowMs / 1000)
-      return NextResponse.json(
-        { error: "Too many requests" },
-        {
-          status: 429,
-          headers: { "Retry-After": String(retryAfter) },
-        }
-      )
-    }
+    count = await incrementCounter(key, windowStart)
   } catch {
-    // If rate limiting fails (e.g., table doesn't exist yet), allow the request
-    console.error("[Rate Limit] Failed to check rate limit, allowing request")
+    // Safe degradation: if the limiter is unavailable, allow the request but
+    // emit a threshold event so operators can alert. Never log identifiers or
+    // secrets here.
+    console.error("[Rate Limit] Limiter unavailable, allowing request", {
+      route,
+      event: "rate_limit_unavailable",
+    })
+    return null
+  }
+
+  if (count > config.maxRequests) {
+    const retryAfter = getRetryAfterSeconds(config.windowMs)
+    console.warn("[Rate Limit] Threshold exceeded", {
+      route,
+      event: "rate_limit_exceeded",
+      count,
+      maxRequests: config.maxRequests,
+    })
+    return NextResponse.json(
+      { error: "Too many requests", retryAfter },
+      {
+        status: 429,
+        headers: { "Retry-After": String(retryAfter) },
+      }
+    )
   }
 
   return null
 }
 
-/** Extract client IP from request headers */
+/**
+ * Extract a stable client identifier from the request.
+ *
+ * Prefers platform-provided headers that are set by the trusted edge/proxy
+ * (e.g. Vercel's `x-real-ip`). `x-forwarded-for` is only used as a fallback
+ * and its left-most entry is taken, since it can be spoofed by clients when
+ * the deployment does not strip/overwrite it. Callers should prefer passing a
+ * verified user id when available.
+ */
 export function getClientIp(req: Request): string {
+  const realIp = req.headers.get("x-real-ip")
+  if (realIp) return realIp.trim()
+
   const forwarded = req.headers.get("x-forwarded-for")
-  if (forwarded) return forwarded.split(",")[0].trim()
-  return req.headers.get("x-real-ip") ?? "unknown"
+  if (forwarded) {
+    const first = forwarded.split(",")[0]?.trim()
+    if (first) return first
+  }
+
+  return "unknown"
 }

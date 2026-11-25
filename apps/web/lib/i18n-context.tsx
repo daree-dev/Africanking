@@ -1,6 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
+import { featureTranslations } from "@/lib/i18n"
 
 type Language = "es" | "en"
 
@@ -12,7 +13,7 @@ interface I18nContextType {
 
 const I18nContext = createContext<I18nContextType | undefined>(undefined)
 
-const translations = {
+const baseTranslations = {
   es: {
     // Landing Page
     "landing.title": "Energía Verde Tokenizada",
@@ -49,8 +50,8 @@ const translations = {
     "landing.step2.desc": "Registrá la energía generada por cada medidor. Manual o por archivo.",
     "landing.step3.title": "Generá certificados",
     "landing.step3.desc": "Cada período de generación se convierte en un certificado digital verificable.",
-    "landing.step4.title": "Vendé a empresas ESG",
-    "landing.step4.desc": "Empresas y fondos retiran tus certificados para cumplir sus compromisos ambientales.",
+    "landing.step4.title": "Gestioná tus créditos",
+    "landing.step4.desc": "Los créditos de generación se asignan a los miembros de la cooperativa según su participación.",
 
     // Dashboard
     "dashboard.welcome": "Bienvenido,",
@@ -85,13 +86,13 @@ const translations = {
     "dashboard.certifiedTooltip": "Energía certificada en blockchain como proto-certificado renovable",
     "dashboard.statsError": "No se pudieron cargar las estadísticas",
     "dashboard.kwhCertified": "kWh certificados",
-    "dashboard.kwhSold": "kWh vendidos",
+    "dashboard.kwhSold": "kWh asignados",
     "dashboard.co2Avoided": "kg CO₂ evitado",
-    "dashboard.forSale": "a la venta",
+    "dashboard.forSale": "con crédito emitido",
     "dashboard.certifiedTooltipGlobal": "Total de kWh de energía renovable certificada en blockchain por todas las cooperativas",
-    "dashboard.soldTooltipGlobal": "kWh cuyos certificados fueron comprados por empresas o fondos ESG. Un certificado vendido se 'retira' para que no pueda revenderse.",
-    "dashboard.co2TooltipGlobal": "Estimación de CO₂ que se evitó emitir gracias a la energía renovable certificada y vendida",
-    "dashboard.forSaleTooltip": "Certificados disponibles para la venta a empresas o fondos que buscan compensar su huella de carbono",
+    "dashboard.soldTooltipGlobal": "kWh cuyos créditos de generación fueron retirados on-chain por los miembros de la cooperativa.",
+    "dashboard.co2TooltipGlobal": "Estimación de CO₂ que se evitó emitir gracias a la energía renovable registrada. Basado en 0,4 kg CO₂/kWh renovable — no es una cifra auditada.",
+    "dashboard.forSaleTooltip": "Créditos de generación emitidos on-chain y aún no retirados por los miembros.",
     "dashboard.chartCertificados": "Certificados",
     "dashboard.chartVendidos": "Vendidos",
     "dashboard.community": "Comunidad",
@@ -136,7 +137,7 @@ const translations = {
     "certificates.byTechnology": "Por Tecnología",
     "certificates.tooltip.certified": "Total de kWh con certificado emitido en blockchain",
     "certificates.tooltip.retired": "kWh cuyo certificado fue comprado y retirado (quemado on-chain)",
-    "certificates.tooltip.co2": "Estimación de CO₂ evitado basada en 0.4 kg CO₂ por kWh renovable",
+    "certificates.tooltip.co2": "Estimación de CO₂ evitado basada en 0,4 kg CO₂ por kWh renovable — no es una cifra auditada.",
     "certificates.tooltip.available": "Certificados emitidos que aún no fueron comprados",
     "certificates.tooltip.pending": "Certificados pendientes de emisión en blockchain",
 
@@ -192,6 +193,19 @@ const translations = {
     "sidebar.disconnect": "Desconectar",
     "sidebar.cooperative": "Mi Cooperativa",
     "sidebar.admin": "Administración",
+    "nav.primary": "Navegación principal",
+    "nav.platformAdmin": "Administración de plataforma",
+    "nav.cooperativeAdmin": "Administración de cooperativa",
+    "adminIa.platformScope": "Vista de toda la plataforma: estadísticas de todas las cooperativas y emisión de tokens HDROP. La gestión de miembros, medidores, lecturas y créditos se hace desde Administración de cooperativa.",
+    "adminIa.cooperativeScope": "Gestioná miembros, medidores, lecturas y la asignación de créditos de generación a los miembros de tu cooperativa.",
+    "adminIa.goToCooperativeAdmin": "Ir a Administración de cooperativa",
+    "adminIa.sections": "Secciones de administración",
+    "adminIa.section.overview": "Resumen",
+    "adminIa.section.cooperatives": "Cooperativas",
+    "adminIa.section.pipeline": "Pipeline de créditos",
+    "adminIa.section.activity": "Actividad on-chain",
+    "adminIa.section.token-issuance": "Emisión de tokens HDROP",
+    "adminIa.tokenIssuanceHelp": "Emití tokens HDROP desde la wallet con rol de minter. El contrato verifica el rol on-chain en cada operación.",
 
     // Activity Page
     "activity.description": "Historial de transacciones recibidas y enviadas",
@@ -220,10 +234,41 @@ const translations = {
     "activity.december": "Diciembre",
     "activity.noTransactions": "No hay transacciones registradas",
     "activity.recentPayments": "Pagos Recientes",
-    "activity.recentPaymentsDescription": "Últimos pagos obtenidos desde la red Stellar (Horizon)",
+    "activity.recentPaymentsDescription": "Pagos de la red Stellar y movimientos del token de la cooperativa",
     "activity.loading": "Cargando transacciones...",
     "activity.errorFetching": "No se pudo cargar el historial de pagos",
     "activity.retry": "Reintentar",
+    "activity.dataSources": "Fuentes de datos",
+    "activity.source.horizon": "Pagos (Horizon)",
+    "activity.source.sorobanRpc": "Eventos del contrato (Soroban RPC)",
+    "activity.source.cooperativeRecords": "Registros de la cooperativa",
+    "activity.accountNotFound": "Esta cuenta todavía no existe en esta red (no fue fondeada).",
+    "activity.eventsUnsupported": "El historial de eventos del contrato no está disponible desde este endpoint; se muestran los registros de la cooperativa",
+    "activity.error.outage": "El servicio no está disponible en este momento.",
+    "activity.error.rateLimited": "Demasiadas solicitudes; intentá de nuevo en unos segundos.",
+    "activity.error.network": "No se pudo conectar con el servicio.",
+    "activity.error.badResponse": "El servicio devolvió una respuesta inesperada.",
+    "activity.loadMore": "Cargar más",
+    "activity.loadingMore": "Cargando...",
+    "activity.networkMismatch": "Red distinta:",
+    "activity.configInvalid": "Configuración de red inválida:",
+    "intent.title": "Revisá la operación antes de firmar",
+    "intent.description": "Tu wallet te pedirá la firma solo después de que confirmes estos datos.",
+    "intent.cooperative": "Cooperativa",
+    "intent.operation": "Operación",
+    "intent.amount": "Energía",
+    "intent.contract": "Contrato",
+    "intent.method": "Función",
+    "intent.recipient": "Destinatario",
+    "intent.signer": "Firmante",
+    "intent.network": "Red",
+    "intent.op.mint": "Asignar créditos de generación (mint)",
+    "intent.op.burn": "Consumir créditos (burn)",
+    "intent.op.transfer": "Transferir créditos",
+    "intent.op.record_generation": "Registrar generación",
+    "intent.networkUnverified": "Tu wallet no informa su red. La firma solo se aceptará si corresponde a la red configurada.",
+    "intent.cancel": "Cancelar",
+    "intent.confirm": "Continuar a la firma",
 
     // Consumption Page
     "consumption.description": "Historial de generación energética",
@@ -403,6 +448,55 @@ const translations = {
     "onboarding.joinFootnote": "Una vez agregado, actualizá la sesión para ver los cambios.",
     "onboarding.copyAddress": "Copiar dirección",
     "onboarding.copiedAddress": "¡Copiado!",
+
+    // Auth / Login
+    "auth.signIn": "Ingresá a tu cuenta",
+    "auth.signInSubtitle": "Usá tu email y contraseña para acceder.",
+    "auth.email": "Email",
+    "auth.emailPlaceholder": "tu@empresa.com",
+    "auth.password": "Contraseña",
+    "auth.submit": "Ingresar",
+    "auth.submitting": "Ingresando…",
+    "auth.errorCredentials": "Email o contraseña incorrectos.",
+    "auth.errorNetwork": "Error de red. Intentá de nuevo.",
+    "auth.walletPrompt": "¿Sos cooperativa con wallet Stellar?",
+    "auth.connectWallet": "Conectar wallet Stellar",
+    "auth.cancelledWallet": "Conexión cancelada",
+    "auth.demoLabel": "Demo:",
+
+    // Certificate detail
+    "certificates.detail.notFoundTitle": "Certificado no encontrado",
+    "certificates.detail.notFoundDesc": "El certificado que buscás no existe o fue eliminado.",
+    "certificates.detail.backToList": "Volver a certificados",
+    "certificates.detail.title": "Detalle del Certificado",
+    "certificates.detail.copied": "¡Copiado!",
+    "certificates.detail.share": "Compartir",
+    "certificates.detail.cooperative": "Cooperativa",
+    "certificates.detail.technology": "Tecnología",
+    "certificates.detail.generationPeriod": "Período de generación",
+    "certificates.detail.mintTransaction": "Transacción de emisión",
+    "certificates.detail.retireTransaction": "Transacción de retiro",
+    "certificates.detail.retiredBy": "Retirado por",
+
+    // Members panel
+    "members.title": "Miembros de la cooperativa",
+    "members.addMember": "Agregar miembro",
+    "members.allocationUsed": "Cuotaparte usada",
+    "members.allocationRemaining": "Cuotaparte disponible",
+    "members.allocationExceeds": "La cuotaparte supera el disponible",
+    "members.capacityGuard": "Capacidad total de la cooperativa",
+    "members.walletAddress": "Dirección Stellar",
+    "members.shareAllocation": "Cuotaparte (%)",
+    "members.name": "Nombre del miembro",
+    "members.capacityKw": "Capacidad (kW)",
+    "members.role": "Rol",
+    "members.pendingChain": "Enviando a la red…",
+    "members.success": "Miembro agregado correctamente",
+    "members.submit": "Agregar miembro",
+
+    // Success modal extra types
+    "success.purchase": "Compra",
+    "success.sale": "Venta",
   },
   en: {
     // Landing Page
@@ -440,8 +534,8 @@ const translations = {
     "landing.step2.desc": "Record the energy generated by each meter. Manual or by file.",
     "landing.step3.title": "Generate certificates",
     "landing.step3.desc": "Each generation period becomes a verifiable digital certificate.",
-    "landing.step4.title": "Sell to ESG companies",
-    "landing.step4.desc": "Companies and funds retire your certificates to meet their environmental commitments.",
+    "landing.step4.title": "Manage your credits",
+    "landing.step4.desc": "Generation credits are allocated to cooperative members according to their participation share.",
 
     // Dashboard
     "dashboard.welcome": "Welcome,",
@@ -476,13 +570,13 @@ const translations = {
     "dashboard.certifiedTooltip": "Energy certified on blockchain as a renewable proto-certificate",
     "dashboard.statsError": "Could not load statistics",
     "dashboard.kwhCertified": "kWh certified",
-    "dashboard.kwhSold": "kWh sold",
+    "dashboard.kwhSold": "kWh allocated",
     "dashboard.co2Avoided": "kg CO₂ avoided",
-    "dashboard.forSale": "for sale",
+    "dashboard.forSale": "credits issued",
     "dashboard.certifiedTooltipGlobal": "Total kWh of renewable energy certified on blockchain by all cooperatives",
-    "dashboard.soldTooltipGlobal": "kWh whose certificates were purchased by ESG companies or funds. A sold certificate is 'retired' so it cannot be resold.",
-    "dashboard.co2TooltipGlobal": "Estimated CO₂ avoided thanks to certified and sold renewable energy",
-    "dashboard.forSaleTooltip": "Certificates available for sale to companies or funds looking to offset their carbon footprint",
+    "dashboard.soldTooltipGlobal": "kWh whose generation credits have been retired on-chain by cooperative members.",
+    "dashboard.co2TooltipGlobal": "Estimated CO₂ avoided based on 0.4 kg CO₂ per renewable kWh — this is an estimate, not an audited figure.",
+    "dashboard.forSaleTooltip": "Generation credits issued on-chain that have not yet been retired by members.",
     "dashboard.chartCertificados": "Certified",
     "dashboard.chartVendidos": "Sold",
     "dashboard.community": "Community",
@@ -527,7 +621,7 @@ const translations = {
     "certificates.byTechnology": "By Technology",
     "certificates.tooltip.certified": "Total kWh with certificates issued on blockchain",
     "certificates.tooltip.retired": "kWh whose certificate was purchased and retired (burned on-chain)",
-    "certificates.tooltip.co2": "CO₂ avoided estimate based on 0.4 kg CO₂ per renewable kWh",
+    "certificates.tooltip.co2": "Estimated CO₂ avoided based on 0.4 kg CO₂ per renewable kWh — this is an estimate, not an audited figure.",
     "certificates.tooltip.available": "Issued certificates not yet purchased",
     "certificates.tooltip.pending": "Certificates pending issuance on blockchain",
 
@@ -583,6 +677,19 @@ const translations = {
     "sidebar.disconnect": "Disconnect",
     "sidebar.cooperative": "My Cooperative",
     "sidebar.admin": "Administration",
+    "nav.primary": "Primary navigation",
+    "nav.platformAdmin": "Platform admin",
+    "nav.cooperativeAdmin": "Cooperative admin",
+    "adminIa.platformScope": "Platform-wide view: statistics across all cooperatives and HDROP token issuance. Members, meters, readings and credits are managed from Cooperative admin.",
+    "adminIa.cooperativeScope": "Manage members, meters, readings and the assignment of generation credits to your cooperative's members.",
+    "adminIa.goToCooperativeAdmin": "Go to Cooperative admin",
+    "adminIa.sections": "Administration sections",
+    "adminIa.section.overview": "Overview",
+    "adminIa.section.cooperatives": "Cooperatives",
+    "adminIa.section.pipeline": "Credit pipeline",
+    "adminIa.section.activity": "On-chain activity",
+    "adminIa.section.token-issuance": "HDROP token issuance",
+    "adminIa.tokenIssuanceHelp": "Issue HDROP tokens from the wallet holding the minter role. The contract verifies the role on-chain for every operation.",
 
     // Activity Page
     "activity.description": "Transaction history of received and sent payments",
@@ -611,10 +718,41 @@ const translations = {
     "activity.december": "December",
     "activity.noTransactions": "No transactions recorded",
     "activity.recentPayments": "Recent Payments",
-    "activity.recentPaymentsDescription": "Latest payments fetched from the Stellar network (Horizon)",
+    "activity.recentPaymentsDescription": "Stellar network payments and cooperative token movements",
     "activity.loading": "Loading transactions...",
     "activity.errorFetching": "Could not load payment history",
     "activity.retry": "Retry",
+    "activity.dataSources": "Data sources",
+    "activity.source.horizon": "Payments (Horizon)",
+    "activity.source.sorobanRpc": "Contract events (Soroban RPC)",
+    "activity.source.cooperativeRecords": "Cooperative records",
+    "activity.accountNotFound": "This account does not exist on this network yet (not funded).",
+    "activity.eventsUnsupported": "Contract event history is not available from this endpoint; showing cooperative records",
+    "activity.error.outage": "The service is currently unavailable.",
+    "activity.error.rateLimited": "Too many requests; try again in a few seconds.",
+    "activity.error.network": "Could not reach the service.",
+    "activity.error.badResponse": "The service returned an unexpected response.",
+    "activity.loadMore": "Load more",
+    "activity.loadingMore": "Loading...",
+    "activity.networkMismatch": "Network mismatch:",
+    "activity.configInvalid": "Invalid network configuration:",
+    "intent.title": "Review before signing",
+    "intent.description": "Your wallet will only ask for a signature after you confirm these details.",
+    "intent.cooperative": "Cooperative",
+    "intent.operation": "Operation",
+    "intent.amount": "Energy",
+    "intent.contract": "Contract",
+    "intent.method": "Function",
+    "intent.recipient": "Recipient",
+    "intent.signer": "Signer",
+    "intent.network": "Network",
+    "intent.op.mint": "Assign generation credits (mint)",
+    "intent.op.burn": "Consume credits (burn)",
+    "intent.op.transfer": "Transfer credits",
+    "intent.op.record_generation": "Record generation",
+    "intent.networkUnverified": "Your wallet does not report its network. The signature will only be accepted if it matches the configured network.",
+    "intent.cancel": "Cancel",
+    "intent.confirm": "Continue to signature",
 
     // Consumption Page
     "consumption.description": "Energy generation history",
@@ -794,7 +932,61 @@ const translations = {
     "onboarding.joinFootnote": "Once added, refresh your session to see the changes.",
     "onboarding.copyAddress": "Copy address",
     "onboarding.copiedAddress": "Copied!",
+
+    // Auth / Login
+    "auth.signIn": "Sign in to your account",
+    "auth.signInSubtitle": "Use your email and password to access.",
+    "auth.email": "Email",
+    "auth.emailPlaceholder": "you@company.com",
+    "auth.password": "Password",
+    "auth.submit": "Sign in",
+    "auth.submitting": "Signing in…",
+    "auth.errorCredentials": "Incorrect email or password.",
+    "auth.errorNetwork": "Network error. Please try again.",
+    "auth.walletPrompt": "Are you a cooperative with a Stellar wallet?",
+    "auth.connectWallet": "Connect Stellar wallet",
+    "auth.cancelledWallet": "Connection cancelled",
+    "auth.demoLabel": "Demo:",
+
+    // Certificate detail
+    "certificates.detail.notFoundTitle": "Certificate not found",
+    "certificates.detail.notFoundDesc": "The certificate you are looking for does not exist or was removed.",
+    "certificates.detail.backToList": "Back to certificates",
+    "certificates.detail.title": "Certificate Detail",
+    "certificates.detail.copied": "Copied!",
+    "certificates.detail.share": "Share",
+    "certificates.detail.cooperative": "Cooperative",
+    "certificates.detail.technology": "Technology",
+    "certificates.detail.generationPeriod": "Generation period",
+    "certificates.detail.mintTransaction": "Issuance transaction",
+    "certificates.detail.retireTransaction": "Retirement transaction",
+    "certificates.detail.retiredBy": "Retired by",
+
+    // Members panel
+    "members.title": "Cooperative members",
+    "members.addMember": "Add member",
+    "members.allocationUsed": "Share used",
+    "members.allocationRemaining": "Share available",
+    "members.allocationExceeds": "Share exceeds available",
+    "members.capacityGuard": "Total cooperative capacity",
+    "members.walletAddress": "Stellar address",
+    "members.shareAllocation": "Share (%)",
+    "members.name": "Member name",
+    "members.capacityKw": "Capacity (kW)",
+    "members.role": "Role",
+    "members.pendingChain": "Sending to network…",
+    "members.success": "Member added successfully",
+    "members.submit": "Add member",
+
+    // Success modal extra types
+    "success.purchase": "Purchase",
+    "success.sale": "Sale",
   },
+}
+
+const translations: Record<Language, Record<string, string>> = {
+  es: { ...baseTranslations.es, ...featureTranslations.es },
+  en: { ...baseTranslations.en, ...featureTranslations.en },
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
@@ -813,7 +1005,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }
 
   const t = (key: string): string => {
-    return translations[language][key as keyof (typeof translations)["es"]] || key
+    return translations[language][key] || key
   }
 
   return <I18nContext.Provider value={{ language, setLanguage, t }}>{children}</I18nContext.Provider>

@@ -1,0 +1,180 @@
+# Service-Level Objectives and Degradation Policy
+#
+# Scope: cooperative-management product. Generation credits are assigned to
+# cooperative members; this is NOT an external certificate marketplace and does
+# NOT claim I-REC/ESG certification.
+#
+# This file is the single source of truth for measurable SLOs, the user-visible
+# degradation policy, error-budget review cadence, and dashboard/alerting
+# guidance. Keep targets and windows in sync with dashboards and alerts.
+
+version: 1
+product: cooperative-management
+last_reviewed: "2025-01-01"
+owner: operations
+
+# ---------------------------------------------------------------------------
+# Service-Level Objectives
+# ---------------------------------------------------------------------------
+# Each SLO has a concrete target, a measurement window, and the metric used to
+# evaluate it. Error budget = 1 - target over the window.
+slos:
+  api_availability:
+    description: >-
+      Successful responses from the public API (non-5xx) across all routes.
+    metric: http_requests_total{status!~"5xx"} / http_requests_total
+    target: 0.995          # 99.5% success
+    window: 30d
+    error_budget: 0.005    # ~3h36m of allowed failure per 30d
+    measurement: >-
+      Ratio of non-5xx responses to total responses, evaluated over a rolling
+      30-day window. Excludes client errors (4xx) which are caller faults.
+
+  reading_ingestion_latency:
+    description: >-
+      Time from a reading being submitted to it being persisted and visible
+      to cooperative members.
+    metric: reading_ingestion_duration_seconds (p95)
+    target_p95_seconds: 5
+    target_p99_seconds: 15
+    window: 7d
+    error_budget: 0.05     # 5% of readings may exceed p95 target
+    measurement: >-
+      p95 and p99 of ingestion duration over a rolling 7-day window. A reading
+      counts as ingested once it is durably stored and queryable.
+
+  chain_status_freshness:
+    description: >-
+      Age of the most recent successfully fetched chain/RPC status shown to
+      users (e.g. ledger height, account balances).
+    metric: chain_status_age_seconds
+    target_max_seconds: 60
+    window: 7d
+    error_budget: 0.01     # 1% of time may exceed freshness target
+    measurement: >-
+      Fraction of time the displayed chain status is older than the target.
+      Measured from last successful RPC poll timestamp.
+
+  data_durability:
+    description: >-
+      Persisted readings and generation-credit assignments are not lost.
+    metric: durability_violations_total
+    target: 0              # zero acknowledged-write losses
+    window: 30d
+    error_budget: 0        # any loss is a page-worthy incident
+    measurement: >-
+      Count of acknowledged writes that are later found missing or corrupted.
+      Backups and point-in-time recovery must be verified per disaster-recovery
+      runbook.
+
+# ---------------------------------------------------------------------------
+# Degradation policy
+# ---------------------------------------------------------------------------
+# User-visible behavior when an SLO is at risk (error budget burning fast) or
+# a dependency is degraded. Behavior must be explicit and non-destructive:
+# never drop or silently discard user data.
+degradation_policy:
+  principles:
+    - Preserve existing data; never delete or overwrite on degradation.
+    - Surface status to users rather than failing silently.
+    - Prefer stale-but-labeled data over blank screens.
+    - Degrade read paths before write paths; queue writes when possible.
+
+  api_availability:
+    at_risk: >-
+      Serve cached/read-only responses where safe and show a banner that some
+      actions may be delayed. Shed non-critical background work first.
+    degraded: >-
+      Return explicit 503 with Retry-After for unavailable routes; keep health
+      and read endpoints up. Users see a clear service-status message.
+
+  reading_ingestion_latency:
+    at_risk: >-
+      Accept readings into a durable queue and show "pending" status to the
+      submitter instead of blocking. Increase worker concurrency if capacity
+      allows.
+    degraded: >-
+      Continue accepting readings into the queue; display an ingestion-delay
+      notice with expected processing time. Do not reject valid readings.
+
+  chain_status_freshness:
+    at_risk: >-
+      Show last-known chain status with a "last updated" timestamp and a
+      stale-data indicator.
+    degraded: >-
+      Clearly label chain status as unavailable/stale; disable actions that
+      require live chain confirmation while keeping local data readable.
+
+  data_durability:
+    at_risk: >-
+      Halt non-essential writes, verify backups, and alert on-call immediately.
+    degraded: >-
+      Enter write-protection mode: reject new writes with an explicit message
+      rather than risk loss; preserve and expose all existing data.
+
+# ---------------------------------------------------------------------------
+# Error-budget review and capacity assumptions
+# ---------------------------------------------------------------------------
+error_budget_review:
+  cadence: weekly            # review trends every week
+  deep_review: monthly       # full capacity reassessment monthly
+  participants: [operations, engineering]
+  inputs:
+    - error-budget burn rate per SLO (fast burn and slow burn)
+    - incident postmortems and durability violations
+    - ingestion throughput vs. capacity headroom
+  actions:
+    - >-
+      If an SLO is projected to exhaust its budget before the window ends,
+      freeze risky changes and prioritize reliability work.
+    - >-
+      Update capacity assumptions (worker concurrency, RPC poll rate, DB
+      headroom) from observed error-budget trends and record changes here.
+  capacity_assumptions:
+    ingestion_workers: 4
+    rpc_poll_interval_seconds: 15
+    db_headroom_percent: 30
+    note: >-
+      Adjust these values after each monthly deep review based on error-budget
+      trends; document the change and rationale in the operations runbook.
+
+# ---------------------------------------------------------------------------
+# Dashboards and alerting
+# ---------------------------------------------------------------------------
+dashboards:
+  - name: slo-overview
+    panels:
+      - api_availability (30d ratio + error budget remaining)
+      - reading_ingestion_latency (p95/p99 over 7d)
+      - chain_status_freshness (age over 7d)
+      - data_durability (violations counter)
+  - name: error-budget-burn
+    panels:
+      - fast-burn and slow-burn rates per SLO
+      - projected budget exhaustion
+
+alerting:
+  fast_burn:
+    condition: burn_rate > 14.4 over 1h   # ~2% budget in 1h
+    severity: page
+  slow_burn:
+    condition: burn_rate > 6 over 6h      # ~5% budget in 6h
+    severity: ticket
+  durability:
+    condition: durability_violations_total > 0
+    severity: page
+  validation: >-
+    Demonstrate alerting by inducing a controlled SLO breach in a staging
+    environment (e.g. inject 5xx or RPC latency) and confirming the expected
+    alert fires and routes to on-call.
+
+# ---------------------------------------------------------------------------
+# Rollout / migration
+# ---------------------------------------------------------------------------
+rollout:
+  risk: medium
+  data_migration: none       # configuration-only; no schema or data changes
+  steps:
+    - Publish slo-overview and error-budget-burn dashboards.
+    - Wire alerts to on-call routing and validate with a controlled breach.
+    - Announce degradation policy to cooperative members via status page.
