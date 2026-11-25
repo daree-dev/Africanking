@@ -22,13 +22,32 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
     const cooperativeId = searchParams.get("cooperative_id")
     const stellarAddress = searchParams.get("stellar_address")
-    const limit = Math.min(Number(searchParams.get("limit")) || 50, 100)
+    const startDate = searchParams.get("start_date")
+    const endDate = searchParams.get("end_date")
+    const limit = Math.min(Math.max(Number(searchParams.get("limit")) || 50, 1), 100)
+
+    if (startDate && isNaN(Date.parse(startDate))) {
+      return NextResponse.json({ error: "Invalid start_date format" }, { status: 400 })
+    }
+    if (endDate && isNaN(Date.parse(endDate))) {
+      return NextResponse.json({ error: "Invalid end_date format" }, { status: 400 })
+    }
+    if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
+      return NextResponse.json({ error: "start_date must be before or equal to end_date" }, { status: 400 })
+    }
 
     let query = supabase
       .from("readings")
       .select("*, prosumers(name, stellar_address)")
       .order("created_at", { ascending: false })
       .limit(limit)
+
+    if (startDate) {
+      query = query.gte("created_at", new Date(startDate).toISOString())
+    }
+    if (endDate) {
+      query = query.lte("created_at", new Date(endDate).toISOString())
+    }
 
     if (cooperativeId) {
       if (!session.cooperative_ids.includes(cooperativeId)) {
