@@ -11,7 +11,88 @@ if (!supabaseUrl || !supabaseServiceKey) {
   process.exit(1)
 }
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey)
+// Service-role client is server-only. This script must never be bundled into
+// browser code; it is executed via `tsx`/`node` in CI and deployment pipelines.
+const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: { persistSession: false, autoRefreshToken: false },
+})
+
+// ============================================
+// Tenant table inventory
+// Each entry declares the least-privilege policies expected for that table.
+// `expectedPolicies` is the auditable invariant: deployment fails if any
+// listed policy is missing after the migration runs.
+// ============================================
+type PolicySpec = {
+  name: string
+  command: "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "ALL"
+  using?: string
+  check?: string
+}
+
+type TableSpec = {
+  table: string
+  policies: PolicySpec[]
+}
+
+const TENANT_TABLES: TableSpec[] = [
+  {
+    table: "cooperatives",
+    policies: [
+      { name: "cooperatives_select", command: "SELECT", using: "true" },
+      { name: "cooperatives_deny_anon", command: "INSERT", check: "false" },
+    ],
+  },
+  {
+    table: "prosumers",
+    policies: [{ name: "prosumers_deny_anon", command: "ALL", using: "false" }],
+  },
+  {
+    table: "meters",
+    policies: [{ name: "meters_deny_anon", command: "ALL", using: "false" }],
+  },
+  {
+    table: "readings",
+    policies: [{ name: "readings_deny_anon", command: "ALL", using: "false" }],
+  },
+  {
+    table: "certificates",
+    policies: [
+      { name: "certificates_select", command: "SELECT", using: "true" },
+      { name: "certificates_deny_write", command: "INSERT", check: "false" },
+    ],
+  },
+  {
+    table: "retirements",
+    policies: [
+      { name: "retirements_select", command: "SELECT", using: "true" },
+      { name: "retirements_deny_write", command: "INSERT", check: "false" },
+    ],
+  },
+  {
+    table: "mint_log",
+    policies: [{ name: "mint_log_deny_anon", command: "ALL", using: "false" }],
+  },
+  {
+    table: "auth_challenges",
+    policies: [{ name: "auth_challenges_deny_anon", command: "ALL", using: "false" }],
+  },
+  {
+    table: "rate_limits",
+    policies: [{ name: "rate_limits_deny_anon", command: "ALL", using: "false" }],
+  },
+  {
+    table: "audit_log",
+    policies: [{ name: "audit_log_deny_anon", command: "ALL", using: "false" }],
+  },
+]
+
+function buildPolicySql(spec: PolicySpec, table: string): string {
+  const parts = [`CREATE POLICY ${spec.name} ON ${table} FOR ${spec.command}`]
+  if (spec.using !== undefined) parts.push(`USING (${spec.using})`)
+  if (spec.check !== undefined) parts.push(`WITH CHECK (${spec.check})`)
+  return parts.join(" ") + ";"
+}
 
 const SQL = `
 -- ============================================
@@ -19,66 +100,35 @@ const SQL = `
 -- Service role key bypasses all RLS — this is expected for API routes
 -- ============================================
 
--- Enable RLS on all tables
-ALTER TABLE cooperatives ENABLE ROW LEVEL SECURITY;
-ALTER TABLE prosumers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE meters ENABLE ROW LEVEL SECURITY;
-ALTER TABLE readings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE certificates ENABLE ROW LEVEL SECURITY;
-ALTER TABLE retirements ENABLE ROW LEVEL SECURITY;
-ALTER TABLE mint_log ENABLE ROW LEVEL SECURITY;
-ALTER TABLE auth_challenges ENABLE ROW LEVEL SECURITY;
-ALTER TABLE rate_limits ENABLE ROW LEVEL SECURITY;
-ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
+-- Enable RLS on all tenant tables
+${TENANT_TABLES.map((t) => `ALTER TABLE ${t.table} ENABLE ROW LEVEL SECURITY;`).join("\n")}
 
--- cooperatives: public read, no anon write
-DROP POLICY IF EXISTS cooperatives_select ON cooperatives;
-CREATE POLICY cooperatives_select ON cooperatives FOR SELECT USING (true);
+-- Least-privilege policies per access path
+${TENANT_TABLES.map((t) =>
+  t.policies
+    .map(
+      (p) =>
+        `DROP POLICY IF EXISTS ${p.name} ON ${t.table};\n${buildPolicySql(p, t.table)}`,
+    )
+    .join("\n"),
+).join("\n\n")}
+`
 
-DROP POLICY IF EXISTS cooperatives_deny_anon ON cooperatives;
-CREATE POLICY cooperatives_deny_anon ON cooperatives FOR INSERT WITH CHECK (false);
-
--- prosumers: no anon access
-DROP POLICY IF EXISTS prosumers_deny_anon ON prosumers;
-CREATE POLICY prosumers_deny_anon ON prosumers FOR ALL USING (false);
-
--- meters: no anon access
-DROP POLICY IF EXISTS meters_deny_anon ON meters;
-CREATE POLICY meters_deny_anon ON meters FOR ALL USING (false);
-
--- readings: no anon access
-DROP POLICY IF EXISTS readings_deny_anon ON readings;
-CREATE POLICY readings_deny_anon ON readings FOR ALL USING (false);
-
--- certificates: public read (transparency), no anon write
-DROP POLICY IF EXISTS certificates_select ON certificates;
-CREATE POLICY certificates_select ON certificates FOR SELECT USING (true);
-
-DROP POLICY IF EXISTS certificates_deny_write ON certificates;
-CREATE POLICY certificates_deny_write ON certificates FOR INSERT WITH CHECK (false);
-
--- retirements: public read
-DROP POLICY IF EXISTS retirements_select ON retirements;
-CREATE POLICY retirements_select ON retirements FOR SELECT USING (true);
-
-DROP POLICY IF EXISTS retirements_deny_write ON retirements;
-CREATE POLICY retirements_deny_write ON retirements FOR INSERT WITH CHECK (false);
-
--- mint_log: no anon access
-DROP POLICY IF EXISTS mint_log_deny_anon ON mint_log;
-CREATE POLICY mint_log_deny_anon ON mint_log FOR ALL USING (false);
-
--- auth_challenges: no anon access
-DROP POLICY IF EXISTS auth_challenges_deny_anon ON auth_challenges;
-CREATE POLICY auth_challenges_deny_anon ON auth_challenges FOR ALL USING (false);
-
--- rate_limits: no anon access
-DROP POLICY IF EXISTS rate_limits_deny_anon ON rate_limits;
-CREATE POLICY rate_limits_deny_anon ON rate_limits FOR ALL USING (false);
-
--- audit_log: no anon access
-DROP POLICY IF EXISTS audit_log_deny_anon ON audit_log;
-CREATE POLICY audit_log_deny_anon ON audit_log FOR ALL USING (false);
+// Verification query: returns every (table, policy) pair that is expected but
+// missing from pg_policies. Deployment fails if any rows are returned.
+const VERIFY_SQL = `
+WITH expected(table_name, policy_name) AS (
+  VALUES ${TENANT_TABLES.flatMap((t) =>
+    t.policies.map((p) => `('${t.table}', '${p.name}')`),
+  ).join(",\n         ")}
+)
+SELECT e.table_name, e.policy_name
+FROM expected e
+LEFT JOIN pg_policies p
+  ON p.schemaname = 'public'
+ AND p.tablename = e.table_name
+ AND p.policyname = e.policy_name
+WHERE p.policyname IS NULL;
 `
 
 async function main() {
@@ -93,6 +143,27 @@ async function main() {
   }
 
   console.log("RLS policies created successfully!")
+
+  // Deployment invariant: every tenant table must have its expected policies.
+  const { data: missing, error: verifyError } = await supabase.rpc("exec_sql", {
+    query: VERIFY_SQL,
+  })
+
+  if (verifyError) {
+    console.error("Could not verify RLS policies:", verifyError.message)
+    process.exit(1)
+  }
+
+  const missingRows = Array.isArray(missing) ? missing : []
+  if (missingRows.length > 0) {
+    console.error("RLS verification failed — missing policies:")
+    for (const row of missingRows as Array<{ table_name: string; policy_name: string }>) {
+      console.error(`  - ${row.table_name}.${row.policy_name}`)
+    }
+    process.exit(1)
+  }
+
+  console.log("RLS verification passed: all tenant tables have expected policies.")
 }
 
 main()
