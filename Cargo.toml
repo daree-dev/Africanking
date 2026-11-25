@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+  "apps/api",
+  "crates/*",
+]
+
+# Supply-chain policy (see docs/SECURITY-SUPPLY-CHAIN.md and .github/workflows/security.yml)
+# - Git-sourced contract dependencies MUST be pinned to an approved revision (rev = "<sha>").
+# - Do not use branch/tag-only Git dependencies; record the approved revision in the doc.
+# - Dependency review + cargo audit run on every PR touching Cargo.lock.
+
+[workspace.dependencies]
+# Approved Git-sourced contract library, pinned to a reviewed revision.
+# Update only via a PR that records the new revision in docs/SECURITY-SUPPLY-CHAIN.md.
+contracts-core = { git = "https://github.com/example/contracts-core.git", rev = "0000000000000000000000000000000000000000" }
+
+[profile.release]
+lto = true
+codegen-units = 1

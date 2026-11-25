@@ -146,9 +146,12 @@ Los hashes WASM de los 3 contratos hijos no se reciben como argumento de `deploy
 - Los porcentajes de `initial_members` deben sumar exactamente 100 (con suma chequeada, sin overflow silencioso)
 - Emite el evento `coop_deployed(cooperative_id, token_addr, dist_addr, gov_addr)`
 
-### Cooperative Registry (#169) — todavía NO implementado
+### Cooperative Registry
 
-La factory ya tiene la interfaz cliente (`registry_interface::CooperativeRegistryTrait`) y llama a `register_cooperative(...)` al final de cada deploy, pero **el contrato `CooperativeRegistry` en sí no existe todavía** — es el issue #169, sigue abierto (ver `memory/backlog-pendiente.md`). Los tests de `cooperative_factory` usan un `MockRegistry` interno (solo para tests) que implementa la misma interfaz mínima:
+`apps/contracts/cooperative_registry` implementa la interfaz que usa la factory.
+El administrador configura la factory una sola vez; solo esa dirección puede
+registrar cooperativas, y el registry rechaza IDs duplicados. Los tests de
+`cooperative_factory` también usan un `MockRegistry` interno:
 
 ```rust
 pub struct RegistryEntry {
@@ -158,7 +161,9 @@ pub struct RegistryEntry {
 }
 ```
 
-Hasta que se implemente el registry real, la factory no se puede usar en Testnet/Mainnet — necesita la dirección de un `CooperativeRegistry` desplegado en su constructor.
+El flujo para compilar, previsualizar y desplegar registry, factory y una
+cooperativa de ejemplo en Testnet está en
+[`apps/contracts/DEPLOYMENT.md`](../apps/contracts/DEPLOYMENT.md).
 
 ---
 
@@ -191,6 +196,8 @@ Constructor params:
 ---
 
 ## 7. Seguridad (OpenZeppelin)
+
+> Roles operativos, multisig, rotación de claves, pausa de emergencia y procedimiento de upgrade: ver [`operations/contract-authority-runbook.md`](operations/contract-authority-runbook.md).
 
 Ambos contratos principales usan componentes auditados de OpenZeppelin Stellar v0.5.1:
 

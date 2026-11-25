@@ -6,7 +6,7 @@
     "dev": "next dev --port 3001",
     "build": "next build",
     "start": "next start --port 3001",
-    "test:api": "vitest run __tests__/api"
+    "test:api": "vitest run __tests__"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^14.3.3",

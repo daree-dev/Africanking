@@ -5,10 +5,13 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import type { Horizon } from "@stellar/stellar-sdk"
 import { storage } from "@be-energy/stellar"
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit"
+import { APP_NETWORK, walletNetworkMismatch } from "@/lib/stellar-network"
+import type { LiveWalletState } from "@/lib/wallet/contract-write"
 import {
   connectWallet as stellarConnect,
   disconnectWallet as stellarDisconnect,
   fetchBalances,
+  getLiveWalletInfo,
   wallet,
   type MappedBalances,
 } from "@be-energy/stellar"
@@ -32,6 +35,12 @@ interface WalletContextType {
   isFreighterInstalled: boolean
   isPending: boolean
   network: string | null
+  /** Passphrase reported by the wallet, null if the wallet does not report it */
+  networkPassphrase: string | null
+  /** Non-null when the wallet reports a network different from the app's */
+  networkMismatch: string | null
+  /** Query the wallet extension directly (not cached state) */
+  getLiveWalletState: () => Promise<LiveWalletState>
   kit: StellarWalletsKit | null
   signTransaction: ((...args: any[]) => any) | null
 }
@@ -49,6 +58,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [balances, setBalances] = useState<MappedBalances>({})
   const [isPending, setIsPending] = useState(true)
   const [network, setNetwork] = useState<string | null>(null)
+  const [networkPassphrase, setNetworkPassphrase] = useState<string | null>(null)
   const walletRestored = useRef(false)
   const kit = typeof window !== "undefined" ? wallet() : null
 
@@ -69,6 +79,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setShortAddress(null)
     setIsConnected(false)
     setNetwork(null)
+    setNetworkPassphrase(null)
     setBalances({})
     storage.setItem("walletId", "")
     storage.setItem("walletAddress", "")
@@ -80,6 +91,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const walletId = storage.getItem("walletId")
     const walletAddr = storage.getItem("walletAddress")
     const walletNetwork = storage.getItem("walletNetwork")
+    const walletPassphrase = storage.getItem("networkPassphrase")
 
     if (!walletId) {
       if (isConnected) nullify()
@@ -94,7 +106,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setAddress(walletAddr)
       setShortAddress(`${walletAddr.slice(0, 6)}...${walletAddr.slice(-4)}`)
       setIsConnected(true)
-      setNetwork(walletNetwork)
+      setNetwork(walletNetwork || null)
+      setNetworkPassphrase(walletPassphrase || null)
     }
   }
 
@@ -159,6 +172,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         setShortAddress(`${result.address.slice(0, 6)}...${result.address.slice(-4)}`)
         setIsConnected(true)
         setNetwork(result.network || null)
+        setNetworkPassphrase(result.networkPassphrase || null)
         return result.address
       }
       return null
@@ -176,6 +190,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       console.error("Error disconnecting wallet:", error)
     }
   }
+
+  const getLiveWalletState = useCallback(async (): Promise<LiveWalletState> => {
+    if (typeof window === "undefined" || !storage.getItem("walletId")) {
+      return { address: null, network: null, passphrase: null }
+    }
+    const live = await getLiveWalletInfo()
+    // Keep context in sync with what the wallet actually reports.
+    if (live.network) setNetwork(live.network)
+    if (live.networkPassphrase) setNetworkPassphrase(live.networkPassphrase)
+    return { address: live.address, network: live.network, passphrase: live.networkPassphrase }
+  }, [])
+
+  const networkMismatch =
+    isConnected && (network || networkPassphrase)
+      ? walletNetworkMismatch(APP_NETWORK, { network, passphrase: networkPassphrase })
+      : null
 
   const setUserProfile = (profile: UserProfile) => {
     setUserProfileState(profile)
@@ -198,6 +228,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         isFreighterInstalled,
         isPending,
         network,
+        networkPassphrase,
+        networkMismatch,
+        getLiveWalletState,
         kit,
         signTransaction: kit ? kit.signTransaction.bind(kit) : null,
       }}

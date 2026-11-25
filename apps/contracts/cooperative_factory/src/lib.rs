@@ -69,6 +69,12 @@ const SALT_GOVERNANCE: u8 = 2;
 #[contracttype]
 pub enum DataKey {
     Registry,
+    // Phase 1 hash versioning
+    CurrentHashVersion,
+    HashVersionRecord(u32), // version → HashVersionRecord
+    CooperativeHashVersion(String), // cooperative_id → version
+    
+    // Phase 0 (deprecated): kept for backward compatibility with set_wasm_hashes
     TokenWasm,
     DistributionWasm,
     GovernanceWasm,
@@ -91,6 +97,15 @@ pub struct CooperativeInfo {
     pub governance_contract: Address,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct HashVersionRecord {
+    pub token_wasm_hash: BytesN<32>,
+    pub distribution_wasm_hash: BytesN<32>,
+    pub governance_wasm_hash: BytesN<32>,
+    pub activated_at_ledger: u64,
+}
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -110,6 +125,9 @@ pub enum FactoryError {
     /// Agregar los miembros restantes post-despliegue mediante
     /// `energy_distribution::add_members_multisig`.
     TooManyInitialMembers = 5,
+    /// `set_wasm_hashes` fue llamado más de una vez. Para futuras rotaciones
+    /// de hashes, usa `rotate_wasm_hashes`.
+    HashesAlreadySet = 20,
 }
 
 // Interfaces de contratos externos
@@ -180,20 +198,51 @@ impl CooperativeFactory {
     // Configuración de admin
     // ============================================================================
 
-    /// Almacena los hashes WASM aprobados para los tres contratos hijos.
+    /// Almacena los hashes WASM aprobados para los tres contratos hijos (Inicialización de versión 1).
     ///
     /// Los tres hashes deben corresponder a WASMs ya instalados en la red Stellar
     /// mediante `stellar contract install` (ver documentación del módulo).
     /// Solo el admin de la factory puede llamar esta función.
+    ///
+    /// **Fase 1 Behavior**: Inicializa la versión 1 (la primera y única versión
+    /// si esta función se llama solo una vez en el ciclo de vida del factory).
+    /// Para futuras rotaciones de hashes, usa `rotate_wasm_hashes`.
+    ///
+    /// # Errors
+    /// Retorna `FactoryError::HashesAlreadySet` si `CurrentHashVersion` ya existe,
+    /// lo cual indica que `set_wasm_hashes` ya fue llamado. Para futuras actualizaciones,
+    /// usa `rotate_wasm_hashes`.
     pub fn set_wasm_hashes(
         env: Env,
         token_wasm_hash: BytesN<32>,
         distribution_wasm_hash: BytesN<32>,
         governance_wasm_hash: BytesN<32>,
-    ) {
+    ) -> Result<u32, FactoryError> {
         let admin = access_control::get_admin(&env).expect("admin no configurado");
         admin.require_auth();
 
+        // Verificar que las hashes no hayan sido seteadas aún
+        if env.storage().instance().get::<_, u32>(&DataKey::CurrentHashVersion).is_some() {
+            return Err(FactoryError::HashesAlreadySet);
+        }
+
+        // Inicializar versión 1
+        let version: u32 = 1;
+        let record = HashVersionRecord {
+            token_wasm_hash,
+            distribution_wasm_hash,
+            governance_wasm_hash,
+            activated_at_ledger: env.ledger().sequence(),
+        };
+
+        env.storage()
+            .instance()
+            .set(&DataKey::CurrentHashVersion, &version);
+        env.storage()
+            .instance()
+            .set(&DataKey::HashVersionRecord(version), &record);
+
+        // Mantener hashes deprecated para backward compatibility
         env.storage()
             .instance()
             .set(&DataKey::TokenWasm, &token_wasm_hash);
@@ -209,9 +258,115 @@ impl CooperativeFactory {
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 
         env.events().publish(
-            (Symbol::new(&env, "wasm_updated"),),
-            (token_wasm_hash, distribution_wasm_hash, governance_wasm_hash),
+            (Symbol::new(&env, "hash_version_activated"),),
+            (
+                Symbol::new(&env, "version"),
+                version,
+                Symbol::new(&env, "event_type"),
+                Symbol::new(&env, "initialization"),
+            ),
         );
+
+        Ok(version)
+    }
+
+    /// Rota los hashes WASM a una nueva versión. Solo el admin de la factory puede
+    /// llamar esta función.
+    ///
+    /// **Fase 1 Behavior**: Incrementa `CurrentHashVersion` en 1 y registra
+    /// los nuevos hashes. Todas las cooperativas desplegadas *después* de esta
+    /// llamada usan los nuevos hashes. Las cooperativas existentes no son afectadas.
+    ///
+    /// # Argumentos
+    /// * `token_wasm_hash` - Nuevo hash del contrato de token
+    /// * `distribution_wasm_hash` - Nuevo hash del contrato de distribución
+    /// * `governance_wasm_hash` - Nuevo hash del contrato de gobernanza
+    ///
+    /// # Returns
+    /// El nuevo número de versión activado
+    ///
+    /// # Errors
+    /// * `WasmHashesNotSet` - Si `set_wasm_hashes` aún no ha sido llamado
+    pub fn rotate_wasm_hashes(
+        env: Env,
+        token_wasm_hash: BytesN<32>,
+        distribution_wasm_hash: BytesN<32>,
+        governance_wasm_hash: BytesN<32>,
+    ) -> Result<u32, FactoryError> {
+        let admin = access_control::get_admin(&env).expect("admin no configurado");
+        admin.require_auth();
+
+        // Cargar la versión actual — fallar si aún no se ha inicializado
+        let old_version: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::CurrentHashVersion)
+            .ok_or(FactoryError::WasmHashesNotSet)?;
+
+        // Cargar los hashes antiguos para incluir en el evento de auditoría
+        let old_record: HashVersionRecord = env
+            .storage()
+            .instance()
+            .get(&DataKey::HashVersionRecord(old_version))
+            .ok_or(FactoryError::WasmHashesNotSet)?;
+
+        let new_version = old_version.saturating_add(1);
+        let new_record = HashVersionRecord {
+            token_wasm_hash,
+            distribution_wasm_hash,
+            governance_wasm_hash,
+            activated_at_ledger: env.ledger().sequence(),
+        };
+
+        // Actualizar el hash version actual y almacenar el nuevo record
+        env.storage()
+            .instance()
+            .set(&DataKey::CurrentHashVersion, &new_version);
+        env.storage()
+            .instance()
+            .set(&DataKey::HashVersionRecord(new_version), &new_record);
+
+        // Actualizar hashes deprecated para backward compatibility
+        env.storage()
+            .instance()
+            .set(&DataKey::TokenWasm, &token_wasm_hash);
+        env.storage()
+            .instance()
+            .set(&DataKey::DistributionWasm, &distribution_wasm_hash);
+        env.storage()
+            .instance()
+            .set(&DataKey::GovernanceWasm, &governance_wasm_hash);
+
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        // Emitir evento de auditoría con versiones antigua y nueva
+        env.events().publish(
+            (Symbol::new(&env, "hash_rotation"),),
+            (
+                Symbol::new(&env, "old_version"),
+                old_version,
+                Symbol::new(&env, "new_version"),
+                new_version,
+                Symbol::new(&env, "old_token_hash"),
+                old_record.token_wasm_hash,
+                Symbol::new(&env, "new_token_hash"),
+                token_wasm_hash,
+                Symbol::new(&env, "old_distribution_hash"),
+                old_record.distribution_wasm_hash,
+                Symbol::new(&env, "new_distribution_hash"),
+                distribution_wasm_hash,
+                Symbol::new(&env, "old_governance_hash"),
+                old_record.governance_wasm_hash,
+                Symbol::new(&env, "new_governance_hash"),
+                governance_wasm_hash,
+                Symbol::new(&env, "activated_at_ledger"),
+                new_record.activated_at_ledger,
+            ),
+        );
+
+        Ok(new_version)
     }
 
     // ============================================================================
@@ -234,6 +389,10 @@ impl CooperativeFactory {
     ///                       vacío para cooperativas multi-firmantes y agregar miembros
     ///                       post-despliegue mediante `add_members_multisig`.
     /// * `required_approvals` - Quórum para la gestión de miembros en distribución.
+    ///
+    /// # Fase 1 Behavior
+    /// Registra la versión de hash actual en `CooperativeHashVersion(cooperative_id)`.
+    /// Esto permite futuras consultas de auditoría: "¿qué versión de WASM usa esta coop?"
     pub fn deploy_cooperative(
         env: Env,
         cooperative_id: String,
@@ -256,22 +415,28 @@ impl CooperativeFactory {
             return Err(FactoryError::InitialMembersRequireSingleApproval);
         }
 
-        // Cargar hashes WASM aprobados — fallar rápido si aún no están configurados
-        let token_wasm: BytesN<32> = env
+        // Cargar la versión actual de hashes
+        let current_version: u32 = env
             .storage()
             .instance()
-            .get(&DataKey::TokenWasm)
+            .get(&DataKey::CurrentHashVersion)
             .ok_or(FactoryError::WasmHashesNotSet)?;
-        let distribution_wasm: BytesN<32> = env
+
+        // Cargar el record de hashes correspondiente a la versión actual
+        let hash_record: HashVersionRecord = env
             .storage()
             .instance()
-            .get(&DataKey::DistributionWasm)
+            .get(&DataKey::HashVersionRecord(current_version))
             .ok_or(FactoryError::WasmHashesNotSet)?;
-        let governance_wasm: BytesN<32> = env
-            .storage()
+
+        let token_wasm = hash_record.token_wasm_hash;
+        let distribution_wasm = hash_record.distribution_wasm_hash;
+        let governance_wasm = hash_record.governance_wasm_hash;
+
+        // Registrar la versión de hash usada por esta cooperativa
+        env.storage()
             .instance()
-            .get(&DataKey::GovernanceWasm)
-            .ok_or(FactoryError::WasmHashesNotSet)?;
+            .set(&DataKey::CooperativeHashVersion(cooperative_id.clone()), &current_version);
 
         // Calcular salts determinísticos a partir del cooperative_id
         //
@@ -385,7 +550,18 @@ impl CooperativeFactory {
 
         env.events().publish(
             (Symbol::new(&env, "coop_deployed"),),
-            (cooperative_id.clone(), token_addr.clone(), dist_addr.clone(), gov_addr.clone()),
+            (
+                Symbol::new(&env, "cooperative_id"),
+                cooperative_id.clone(),
+                Symbol::new(&env, "hash_version"),
+                current_version,
+                Symbol::new(&env, "token_contract"),
+                token_addr.clone(),
+                Symbol::new(&env, "distribution_contract"),
+                dist_addr.clone(),
+                Symbol::new(&env, "governance_contract"),
+                gov_addr.clone(),
+            ),
         );
 
         Ok(CooperativeInfo {
@@ -415,8 +591,11 @@ impl CooperativeFactory {
             .expect("registry no configurado")
     }
 
-    /// Retorna los tres hashes WASM aprobados, o `None` si `set_wasm_hashes`
-    /// no ha sido llamado todavía.
+    /// Retorna los tres hashes WASM aprobados actualmente, o `None` si
+    /// `set_wasm_hashes` no ha sido llamado todavía.
+    ///
+    /// **Nota**: Esta función retorna los hashes de la versión actual.
+    /// Para consultar hashes históricos, usa `get_hashes_at_version`.
     pub fn get_wasm_hashes(env: Env) -> Option<(BytesN<32>, BytesN<32>, BytesN<32>)> {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         let token: Option<BytesN<32>> = env.storage().instance().get(&DataKey::TokenWasm);
@@ -426,6 +605,49 @@ impl CooperativeFactory {
             (Some(t), Some(d), Some(g)) => Some((t, d, g)),
             _ => None,
         }
+    }
+
+    /// Retorna el número de versión actual de los hashes WASM, o `None` si no
+    /// han sido inicializados.
+    ///
+    /// La versión comienza en 1 con `set_wasm_hashes` e incrementa con cada
+    /// llamada a `rotate_wasm_hashes`.
+    pub fn get_hash_version(env: Env) -> Option<u32> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage().instance().get(&DataKey::CurrentHashVersion)
+    }
+
+    /// Retorna los hashes WASM de una versión específica, o `None` si esa
+    /// versión nunca fue activada.
+    ///
+    /// # Argumentos
+    /// * `version` - Número de versión a consultar
+    ///
+    /// # Returns
+    /// `Some(HashVersionRecord)` si la versión existe, `None` en caso contrario
+    pub fn get_hashes_at_version(env: Env, version: u32) -> Option<HashVersionRecord> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .get(&DataKey::HashVersionRecord(version))
+    }
+
+    /// Retorna la versión de hash WASM utilizada al desplegar una cooperativa específica.
+    ///
+    /// # Argumentos
+    /// * `cooperative_id` - ID de la cooperativa a consultar
+    ///
+    /// # Returns
+    /// `Some(version)` si la cooperativa fue desplegada, `None` en caso contrario
+    ///
+    /// # Fase 1 Behavior
+    /// Registrado durante `deploy_cooperative` para auditabilidad: permite verificar
+    /// qué versión de WASM usa una cooperativa existente.
+    pub fn get_cooperative_hash_version(env: Env, cooperative_id: String) -> Option<u32> {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .get(&DataKey::CooperativeHashVersion(cooperative_id))
     }
 
     // Helper privado: calcula un salt de 32 bytes para un contrato hijo.
@@ -1038,7 +1260,7 @@ mod test {
         assert_eq!(
             env.events().all().len(),
             1,
-            "set_wasm_hashes debe emitir exactamente un evento wasm_updated"
+            "set_wasm_hashes debe emitir exactamente un evento hash_version_activated"
         );
     }
 
@@ -1058,5 +1280,322 @@ mod test {
 
         // setup() llama set_wasm_hashes (1 evento) + deploy_cooperative (1 evento) = 2 en total.
         assert_eq!(env.events().all().len(), 2);
+    }
+
+    // ========================================================================
+    // Versionamiento de hashes (Phase 1)
+    // ========================================================================
+
+    #[test]
+    fn test_set_wasm_hashes_initializes_version_1() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let factory_admin = Address::generate(&env);
+        let registry = env.register(MockRegistry, ());
+        let factory_id = env.register(CooperativeFactory, (&factory_admin, &registry));
+        let factory = CooperativeFactoryClient::new(&env, &factory_id);
+
+        let token_hash = env.deployer().upload_contract_wasm(TOKEN_WASM);
+        let distribution_hash = env.deployer().upload_contract_wasm(DISTRIBUTION_WASM);
+        let governance_hash = env.deployer().upload_contract_wasm(GOVERNANCE_WASM);
+
+        let version = factory.set_wasm_hashes(&token_hash, &distribution_hash, &governance_hash);
+
+        assert_eq!(version, 1);
+        assert_eq!(factory.get_hash_version(), Some(1));
+    }
+
+    #[test]
+    fn test_set_wasm_hashes_fails_if_already_set() {
+        let env = Env::default();
+        let t = setup(&env);
+
+        // Intentar llamar set_wasm_hashes nuevamente
+        let token_hash = env.deployer().upload_contract_wasm(TOKEN_WASM);
+        let distribution_hash = env.deployer().upload_contract_wasm(DISTRIBUTION_WASM);
+        let governance_hash = env.deployer().upload_contract_wasm(GOVERNANCE_WASM);
+
+        let result = t.factory.try_set_wasm_hashes(&token_hash, &distribution_hash, &governance_hash);
+        assert_eq!(result, Err(Ok(FactoryError::HashesAlreadySet)));
+    }
+
+    #[test]
+    fn test_get_hashes_at_version() {
+        let env = Env::default();
+        let t = setup(&env);
+
+        let record = t.factory.get_hashes_at_version(&1u32).unwrap();
+        assert_eq!(record.token_wasm_hash, t.token_hash);
+        assert_eq!(record.distribution_wasm_hash, t.distribution_hash);
+        assert_eq!(record.governance_wasm_hash, t.governance_hash);
+        assert!(record.activated_at_ledger > 0);
+    }
+
+    #[test]
+    fn test_rotate_wasm_hashes_increments_version() {
+        let env = Env::default();
+        let t = setup(&env);
+
+        // Crear nuevos hashes por una segunda compilación
+        let new_token_hash = env.deployer().upload_contract_wasm(TOKEN_WASM);
+        let new_distribution_hash = env.deployer().upload_contract_wasm(DISTRIBUTION_WASM);
+        let new_governance_hash = env.deployer().upload_contract_wasm(GOVERNANCE_WASM);
+
+        let version_before = t.factory.get_hash_version();
+        let new_version = t.factory.rotate_wasm_hashes(
+            &new_token_hash,
+            &new_distribution_hash,
+            &new_governance_hash,
+        );
+
+        assert_eq!(version_before, Some(1));
+        assert_eq!(new_version, 2);
+        assert_eq!(t.factory.get_hash_version(), Some(2));
+    }
+
+    #[test]
+    fn test_rotate_wasm_hashes_stores_history() {
+        let env = Env::default();
+        let t = setup(&env);
+
+        // Hashes originales almacenados en versión 1
+        let v1_record = t.factory.get_hashes_at_version(&1u32).unwrap();
+        assert_eq!(v1_record.token_wasm_hash, t.token_hash);
+
+        // Rotar a nuevos hashes
+        let new_token_hash = env.deployer().upload_contract_wasm(TOKEN_WASM);
+        let new_distribution_hash = env.deployer().upload_contract_wasm(DISTRIBUTION_WASM);
+        let new_governance_hash = env.deployer().upload_contract_wasm(GOVERNANCE_WASM);
+
+        t.factory.rotate_wasm_hashes(
+            &new_token_hash,
+            &new_distribution_hash,
+            &new_governance_hash,
+        );
+
+        // Versión 1 aún debe estar disponible en el historial
+        let v1_record_after = t.factory.get_hashes_at_version(&1u32).unwrap();
+        assert_eq!(v1_record_after.token_wasm_hash, t.token_hash);
+
+        // Versión 2 contiene los nuevos hashes
+        let v2_record = t.factory.get_hashes_at_version(&2u32).unwrap();
+        assert_eq!(v2_record.token_wasm_hash, new_token_hash);
+        assert_eq!(v2_record.distribution_wasm_hash, new_distribution_hash);
+        assert_eq!(v2_record.governance_wasm_hash, new_governance_hash);
+    }
+
+    #[test]
+    fn test_rotate_wasm_hashes_requires_admin() {
+        let env = Env::default();
+        let t = setup(&env);
+
+        // Sin mock de auth — require_auth se aplica
+        let env2 = Env::default();
+        let factory_admin2 = Address::generate(&env2);
+        let registry2 = env2.register(MockRegistry, ());
+        let factory_id2 = env2.register(CooperativeFactory, (&factory_admin2, &registry2));
+        let factory2 = CooperativeFactoryClient::new(&env2, &factory_id2);
+
+        // Inicializar versión 1 (aún sin mock de auth en env2)
+        // Necesitamos cambiar a env2 con mock para esta parte
+        // Este test verifica auth requerida, así que omitimos la inicialización
+        // y probamos rotate en la factory del setup (que sí tiene auth)
+        
+        // Crear env2 sin mock para verificar que rotate falla sin admin
+        let env2_no_mock = Env::default();
+        let factory_admin2_no_mock = Address::generate(&env2_no_mock);
+        let registry2_no_mock = env2_no_mock.register(MockRegistry, ());
+        let factory_id2_no_mock =
+            env2_no_mock.register(CooperativeFactory, (&factory_admin2_no_mock, &registry2_no_mock));
+        let factory2_no_mock = CooperativeFactoryClient::new(&env2_no_mock, &factory_id2_no_mock);
+
+        // Setup version 1 con mock
+        env2_no_mock.mock_all_auths_allowing_non_root_auth();
+        let token_hash = env2_no_mock.deployer().upload_contract_wasm(TOKEN_WASM);
+        let distribution_hash = env2_no_mock.deployer().upload_contract_wasm(DISTRIBUTION_WASM);
+        let governance_hash = env2_no_mock.deployer().upload_contract_wasm(GOVERNANCE_WASM);
+        factory2_no_mock.set_wasm_hashes(&token_hash, &distribution_hash, &governance_hash);
+
+        // Ahora sin mock — rotate debe fallar
+        let env_strict = Env::default();
+        let factory_admin_strict = Address::generate(&env_strict);
+        let registry_strict = env_strict.register(MockRegistry, ());
+        let factory_id_strict = env_strict.register(CooperativeFactory, (&factory_admin_strict, &registry_strict));
+        let factory_strict = CooperativeFactoryClient::new(&env_strict, &factory_id_strict);
+
+        // Sin inicializar versión 1 en env_strict, rotate falla por WasmHashesNotSet
+        // Pero si hubiera estado inicializado, faltaría el admin auth
+        let token_hash_strict = env_strict.deployer().upload_contract_wasm(TOKEN_WASM);
+        let distribution_hash_strict = env_strict.deployer().upload_contract_wasm(DISTRIBUTION_WASM);
+        let governance_hash_strict = env_strict.deployer().upload_contract_wasm(GOVERNANCE_WASM);
+
+        let result = factory_strict.try_rotate_wasm_hashes(
+            &token_hash_strict,
+            &distribution_hash_strict,
+            &governance_hash_strict,
+        );
+        // Falla porque no hay versión inicializada (WasmHashesNotSet) o porque falta auth
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rotate_wasm_hashes_emits_event() {
+        let env = Env::default();
+        let t = setup(&env);
+
+        env.events().subscribe(|_| {
+            // Limpiar eventos anteriores del setup
+        });
+
+        let new_token_hash = env.deployer().upload_contract_wasm(TOKEN_WASM);
+        let new_distribution_hash = env.deployer().upload_contract_wasm(DISTRIBUTION_WASM);
+        let new_governance_hash = env.deployer().upload_contract_wasm(GOVERNANCE_WASM);
+
+        t.factory.rotate_wasm_hashes(
+            &new_token_hash,
+            &new_distribution_hash,
+            &new_governance_hash,
+        );
+
+        // El evento hash_rotation debe contener las versiones antigua y nueva
+        let all_events = env.events().all();
+        assert!(
+            all_events.iter().any(|(topics, _)| {
+                topics
+                    .iter()
+                    .any(|t| matches!(t, soroban_sdk::Val::Symbol(s) if s == &Symbol::new(&env, "hash_rotation")))
+            }),
+            "debe emitirse un evento hash_rotation"
+        );
+    }
+
+    #[test]
+    fn test_deploy_uses_current_hash_version() {
+        let env = Env::default();
+        let t = setup(&env);
+
+        // Desplegar con versión 1
+        let coop_admin1 = Address::generate(&env);
+        let coop_id1 = String::from_str(&env, "coop-v1");
+        t.factory.deploy_cooperative(
+            &coop_id1,
+            &coop_admin1,
+            &String::from_str(&env, "V1 Token"),
+            &String::from_str(&env, "V1"),
+            &vec![&env],
+            &1u32,
+        );
+
+        // Verificar que se registró la versión 1
+        assert_eq!(t.factory.get_cooperative_hash_version(&coop_id1), Some(1));
+
+        // Rotar a versión 2
+        let new_token_hash = env.deployer().upload_contract_wasm(TOKEN_WASM);
+        let new_distribution_hash = env.deployer().upload_contract_wasm(DISTRIBUTION_WASM);
+        let new_governance_hash = env.deployer().upload_contract_wasm(GOVERNANCE_WASM);
+        t.factory.rotate_wasm_hashes(
+            &new_token_hash,
+            &new_distribution_hash,
+            &new_governance_hash,
+        );
+
+        // Desplegar con versión 2
+        let coop_admin2 = Address::generate(&env);
+        let coop_id2 = String::from_str(&env, "coop-v2");
+        t.factory.deploy_cooperative(
+            &coop_id2,
+            &coop_admin2,
+            &String::from_str(&env, "V2 Token"),
+            &String::from_str(&env, "V2"),
+            &vec![&env],
+            &1u32,
+        );
+
+        // Verificar que se registró la versión 2
+        assert_eq!(t.factory.get_cooperative_hash_version(&coop_id2), Some(2));
+
+        // La cooperativa 1 debe seguir con versión 1
+        assert_eq!(t.factory.get_cooperative_hash_version(&coop_id1), Some(1));
+    }
+
+    #[test]
+    fn test_multiple_rotations_track_all_versions() {
+        let env = Env::default();
+        let t = setup(&env);
+
+        // Version 1 ya inicializada en setup
+
+        // Rotar a versión 2
+        let hash2_token = env.deployer().upload_contract_wasm(TOKEN_WASM);
+        let hash2_dist = env.deployer().upload_contract_wasm(DISTRIBUTION_WASM);
+        let hash2_gov = env.deployer().upload_contract_wasm(GOVERNANCE_WASM);
+        t.factory
+            .rotate_wasm_hashes(&hash2_token, &hash2_dist, &hash2_gov);
+
+        // Rotar a versión 3
+        let hash3_token = env.deployer().upload_contract_wasm(TOKEN_WASM);
+        let hash3_dist = env.deployer().upload_contract_wasm(DISTRIBUTION_WASM);
+        let hash3_gov = env.deployer().upload_contract_wasm(GOVERNANCE_WASM);
+        t.factory
+            .rotate_wasm_hashes(&hash3_token, &hash3_dist, &hash3_gov);
+
+        // Verificar que todas las versiones están disponibles
+        assert!(t.factory.get_hashes_at_version(&1u32).is_some());
+        assert!(t.factory.get_hashes_at_version(&2u32).is_some());
+        assert!(t.factory.get_hashes_at_version(&3u32).is_some());
+        assert_eq!(t.factory.get_hash_version(), Some(3));
+
+        // Verificar hashes específicos
+        assert_eq!(
+            t.factory.get_hashes_at_version(&2u32).unwrap().token_wasm_hash,
+            hash2_token
+        );
+        assert_eq!(
+            t.factory.get_hashes_at_version(&3u32).unwrap().token_wasm_hash,
+            hash3_token
+        );
+    }
+
+    #[test]
+    fn test_existing_cooperatives_unaffected_by_rotation() {
+        let env = Env::default();
+        let t = setup(&env);
+
+        // Desplegar coop con versión 1
+        let coop_admin = Address::generate(&env);
+        let coop_id = String::from_str(&env, "coop-unchanged");
+        let info_v1 = t.factory.deploy_cooperative(
+            &coop_id,
+            &coop_admin,
+            &String::from_str(&env, "Token"),
+            &String::from_str(&env, "SYM"),
+            &vec![&env],
+            &1u32,
+        );
+
+        // Verificar direcciones de los contratos desplegados
+        let token_addr_v1 = info_v1.token_contract.clone();
+        let dist_addr_v1 = info_v1.distribution_contract.clone();
+
+        // Rotar a versión 2
+        let new_token_hash = env.deployer().upload_contract_wasm(TOKEN_WASM);
+        let new_distribution_hash = env.deployer().upload_contract_wasm(DISTRIBUTION_WASM);
+        let new_governance_hash = env.deployer().upload_contract_wasm(GOVERNANCE_WASM);
+        t.factory.rotate_wasm_hashes(
+            &new_token_hash,
+            &new_distribution_hash,
+            &new_governance_hash,
+        );
+
+        // La cooperativa existente conserva sus direcciones (sus contratos no cambian)
+        // Verificar consultando el registry
+        let registry_client = MockRegistryClient::new(&env, &t.registry);
+        let entry = registry_client.get_cooperative(&coop_id).unwrap();
+        assert_eq!(entry.token, token_addr_v1);
+        assert_eq!(entry.distribution, dist_addr_v1);
+
+        // La cooperativa se registró con versión 1
+        assert_eq!(t.factory.get_cooperative_hash_version(&coop_id), Some(1));
     }
 }

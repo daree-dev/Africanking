@@ -10,13 +10,17 @@ export interface Network {
   horizonUrl: string;
 }
 
-// Get environment variables with fallbacks for local development
-const getEnvVar = (key: string, fallback: string): string => {
-  if (typeof window === "undefined") {
-    return process.env[key] ?? fallback;
-  }
-  return (process.env[key] as string) ?? fallback;
+// Next.js only inlines NEXT_PUBLIC_* values for literal `process.env.X`
+// access, so a dynamic `process.env[key]` is always undefined in the browser.
+// Keep these reads literal.
+const PUBLIC_ENV: Record<string, string | undefined> = {
+  NEXT_PUBLIC_STELLAR_NETWORK: process.env.NEXT_PUBLIC_STELLAR_NETWORK,
+  NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE: process.env.NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE,
+  NEXT_PUBLIC_STELLAR_RPC_URL: process.env.NEXT_PUBLIC_STELLAR_RPC_URL,
+  NEXT_PUBLIC_STELLAR_HORIZON_URL: process.env.NEXT_PUBLIC_STELLAR_HORIZON_URL,
 };
+
+const getEnvVar = (key: string, fallback: string): string => PUBLIC_ENV[key] || fallback;
 
 export const stellarNetwork = getEnvVar("NEXT_PUBLIC_STELLAR_NETWORK", "TESTNET") as
   | "PUBLIC"
@@ -24,20 +28,29 @@ export const stellarNetwork = getEnvVar("NEXT_PUBLIC_STELLAR_NETWORK", "TESTNET"
   | "TESTNET"
   | "LOCAL";
 
+const passphraseForNetwork = (network: string): string => {
+  switch (network) {
+    case "PUBLIC":
+      return WalletNetwork.PUBLIC;
+    case "FUTURENET":
+      return WalletNetwork.FUTURENET;
+    case "LOCAL":
+      return WalletNetwork.STANDALONE;
+    default:
+      return WalletNetwork.TESTNET;
+  }
+};
+
+// Derive the passphrase from the configured network so the wallet kit can
+// never default to TESTNET while the app is configured for another network.
 export const networkPassphrase = getEnvVar(
   "NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE",
-  WalletNetwork.TESTNET
+  passphraseForNetwork(stellarNetwork)
 );
 
-export const rpcUrl = getEnvVar(
-  "NEXT_PUBLIC_STELLAR_RPC_URL",
-  "https://soroban-testnet.stellar.org"
-);
+export const rpcUrl = getEnvVar("NEXT_PUBLIC_STELLAR_RPC_URL", getRpcHost(stellarNetwork));
 
-export const horizonUrl = getEnvVar(
-  "NEXT_PUBLIC_STELLAR_HORIZON_URL",
-  "https://horizon-testnet.stellar.org"
-);
+export const horizonUrl = getEnvVar("NEXT_PUBLIC_STELLAR_HORIZON_URL", getHorizonHost(stellarNetwork));
 
 const networkToId = (network: string): NetworkType => {
   switch (network) {

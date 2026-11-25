@@ -62,8 +62,8 @@ impl CommunityGovernance {
 
         let proposal = Proposal {
             id,
-            title,
-            proposer,
+            title: title.clone(),
+            proposer: proposer.clone(),
             votes_for: 0,
             votes_against: 0,
         };
@@ -74,6 +74,22 @@ impl CommunityGovernance {
 
         env.storage().instance().set(&DataKey::ProposalCount, &id);
         env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+
+        let contract_addr = env.current_contract_address();
+        env.events().publish(
+            (
+                soroban_sdk::Symbol::new(&env, "proposal_created"),
+                contract_addr.clone(),
+                proposer.clone(),
+            ),
+            (
+                contract_addr,
+                id,
+                proposer,
+                title,
+                env.ledger().timestamp(),
+            ),
+        );
 
         Ok(id)
     }

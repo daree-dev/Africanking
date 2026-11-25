@@ -8,6 +8,7 @@ import { AuthProvider } from "@/lib/auth-context"
 import { ThemeProvider } from "@/lib/theme-context"
 import { I18nProvider } from "@/lib/i18n-context"
 import { Toaster } from "@/components/ui/sonner"
+import { TransactionIntentProvider } from "@/components/transaction-intent-provider"
 
 const ibmPlexSans = IBM_Plex_Sans({
   subsets: ["latin"],
@@ -41,7 +42,9 @@ export default function RootLayout({
         <ThemeProvider>
           <I18nProvider>
             <WalletProvider>
-              <AuthProvider>{children}</AuthProvider>
+              <AuthProvider>
+                <TransactionIntentProvider>{children}</TransactionIntentProvider>
+              </AuthProvider>
             </WalletProvider>
           </I18nProvider>
         </ThemeProvider>
